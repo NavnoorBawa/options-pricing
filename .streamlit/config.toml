@@ -1,0 +1,21 @@
+[theme]
+base="dark"
+primaryColor="#FF4B4B"
+backgroundColor="#0E1117"
+secondaryBackgroundColor="#262730"
+textColor="#FAFAFA"
+font="sans serif"
+
+[server]
+runOnSave = true
+enableXsrfProtection = false
+enableCORS = false
+
+[browser]
+serverAddress = "localhost"
+serverPort = 8501
+gatherUsageStats = false
+
+[client]
+toolbarMode = "auto"
+showErrorDetails = false
