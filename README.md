@@ -1,4 +1,4 @@
-# Options Pricing Models Calculator
+# Comprehensive Option Pricing and Strategy Analyzer
 
 ## Overview
 A comprehensive options pricing and analysis tool built with Streamlit that provides advanced options pricing calculations, strategy analysis, and visualization tools for traders and analysts.
