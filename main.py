@@ -1,4 +1,3 @@
-# Required Imports
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -8,96 +7,107 @@ from scipy.stats import norm
 import plotly.graph_objects as go
 import warnings
 from matplotlib.colors import LinearSegmentedColormap
+from scipy.optimize import minimize
 
-# Page Configuration
-st.set_page_config(
-    page_title="Options Pricing Models",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# CSS Styles
-st.markdown("""
-    <style>
-    .greek-card {
-        background-color: #2E2E2E;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin: 0.5rem;
-    }
-    .greek-label {
-        color: #9CA3AF;
-        font-size: 0.875rem;
-        margin-bottom: 0.25rem;
-    }
-    .greek-value {
-        color: white;
-        font-size: 1.25rem;
-        font-weight: 600;
-    }
-    .main {
-        background-color: #0E1117;
-    }
-    .css-1d391kg {
-        padding-top: 0;
-    }
-    .stSelectbox [data-testid="stMarkdownContainer"] {
-        background-color: #262730;
-        padding: 10px;
-        border-radius: 5px;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
-# Author Section
-st.markdown("Created by:")
-st.markdown("""
-<a href="https://www.linkedin.com/in/navnoorbawa/" target="_blank" style="text-decoration: none; color: inherit;">
-    <div style="display: flex; align-items: center; background-color: #1E2530; padding: 10px; border-radius: 5px; width: fit-content; cursor: pointer;">
-        <img src="https://cdn-icons-png.flaticon.com/512/174/174857.png" width="25" height="25" style="margin-right: 10px;">
-        <span style="color: #FFFFFF;">Navnoor Bawa</span>
-    </div>
-</a>
-""", unsafe_allow_html=True)
-
-# Core Pricing Models
+# Black-Scholes Option Pricing Model
 def black_scholes_calc(S, K, T, r, sigma, option_type='call'):
+    """
+    Black-Scholes pricing model for European options
+    
+    Parameters:
+    -----------
+    S : float
+        Current stock price
+    K : float
+        Strike price
+    T : float
+        Time to expiration in years
+    r : float
+        Risk-free interest rate (decimal)
+    sigma : float
+        Volatility (decimal)
+    option_type : str
+        'call' or 'put'
+        
+    Returns:
+    --------
+    float: Option price
+    """
+    if T <= 0 or sigma <= 0:
+        # Handle edge cases for expiration or zero volatility
+        if option_type == 'call':
+            return max(0, S - K) if S > K else 0
+        else:  # put
+            return max(0, K - S) if K > S else 0
+    
+    # Calculate d1 and d2 parameters
     d1 = (np.log(S/K) + (r + sigma**2/2)*T)/(sigma*np.sqrt(T))
     d2 = d1 - sigma*np.sqrt(T)
     
+    # Calculate option price based on type
     if option_type == 'call':
         return S*norm.cdf(d1) - K*np.exp(-r*T)*norm.cdf(d2)
-    else:
+    else:  # put
         return K*np.exp(-r*T)*norm.cdf(-d2) - S*norm.cdf(-d1)
 
+# Cox-Ross-Rubinstein Binomial Option Pricing Model
 def binomial_calc(S, K, T, r, sigma, n, option_type='call', style='european'):
-    dt = T/n
-    u = np.exp(sigma*np.sqrt(dt))
-    d = 1/u
-    p = (np.exp(r*dt) - d)/(u - d)
+    """
+    Binomial option pricing model
     
-    # Stock price tree
+    Parameters:
+    -----------
+    S : float
+        Current stock price
+    K : float
+        Strike price
+    T : float
+        Time to expiration in years
+    r : float
+        Risk-free interest rate (decimal)
+    sigma : float
+        Volatility (decimal)
+    n : int
+        Number of time steps
+    option_type : str
+        'call' or 'put'
+    style : str
+        'european' or 'american'
+        
+    Returns:
+    --------
+    float: Option price
+    """
+    dt = T/n
+    u = np.exp(sigma*np.sqrt(dt))  # Up factor
+    d = 1/u                         # Down factor
+    p = (np.exp(r*dt) - d)/(u - d)  # Risk-neutral probability
+    
+    # Initialize stock price tree
     stock = np.zeros((n+1, n+1))
     stock[0,0] = S
+    
+    # Generate stock price tree
     for i in range(1, n+1):
         stock[0:i+1,i] = S * u**np.arange(i,-1,-1) * d**np.arange(0,i+1)
     
-    # Option value tree
+    # Initialize option value tree
     option = np.zeros((n+1, n+1))
     
-    # Terminal payoffs
+    # Set terminal option values (at expiration)
     if option_type == 'call':
         option[:,n] = np.maximum(stock[:,n] - K, 0)
-    else:
+    else:  # put
         option[:,n] = np.maximum(K - stock[:,n], 0)
     
-    # Backward recursion
+    # Backward recursion for option values
     for j in range(n-1,-1,-1):
         for i in range(j+1):
             if style == 'european':
+                # European option: simply use risk-neutral pricing
                 option[i,j] = np.exp(-r*dt)*(p*option[i,j+1] + (1-p)*option[i+1,j+1])
             else:  # american
+                # American option: consider early exercise
                 hold = np.exp(-r*dt)*(p*option[i,j+1] + (1-p)*option[i+1,j+1])
                 if option_type == 'call':
                     exercise = stock[i,j] - K
@@ -107,570 +117,1016 @@ def binomial_calc(S, K, T, r, sigma, n, option_type='call', style='european'):
     
     return option[0,0]
 
-
+# Monte Carlo Simulation for Option Pricing
 def monte_carlo_calc(S, K, T, r, sigma, n_sim, n_steps, option_type='call'):
+    """
+    Monte Carlo simulation for option pricing
+    
+    Parameters:
+    -----------
+    S : float
+        Current stock price
+    K : float
+        Strike price
+    T : float
+        Time to expiration in years
+    r : float
+        Risk-free interest rate (decimal)
+    sigma : float
+        Volatility (decimal)
+    n_sim : int
+        Number of price path simulations
+    n_steps : int
+        Number of time steps per path
+    option_type : str
+        'call' or 'put'
+        
+    Returns:
+    --------
+    tuple: (option_price, standard_error, price_paths)
+    """
     dt = T/n_steps
     nudt = (r - 0.5*sigma**2)*dt
     sigsqrtdt = sigma*np.sqrt(dt)
     
-    # Generate paths
-    z = np.random.standard_normal((n_sim, n_steps))
-    S_path = S*np.exp(np.cumsum(nudt + sigsqrtdt*z, axis=1))
+    # Generate random standard normal samples
+    Z = np.random.standard_normal((n_sim, n_steps))
     
-    # Calculate payoffs
+    # Initialize price paths array
+    S_path = np.zeros((n_sim, n_steps+1))
+    S_path[:,0] = S
+    
+    # Simulate price paths using Geometric Brownian Motion
+    for t in range(1, n_steps+1):
+        S_path[:,t] = S_path[:,t-1] * np.exp(nudt + sigsqrtdt*Z[:,t-1])
+    
+    # Calculate payoffs at expiration
     if option_type == 'call':
         payoffs = np.maximum(S_path[:,-1] - K, 0)
-    else:
+    else:  # put
         payoffs = np.maximum(K - S_path[:,-1], 0)
     
-    # Calculate price and error
+    # Calculate option price (present value of expected payoff)
     price = np.exp(-r*T)*np.mean(payoffs)
+    
+    # Calculate standard error
     se = np.exp(-r*T)*np.std(payoffs)/np.sqrt(n_sim)
     
     return price, se, S_path
 
-# Validation and Testing Functions
-def validate_inputs(S, K, T, r, sigma, **kwargs):
-    """Validate input parameters for option pricing models."""
-    if not all(isinstance(x, (int, float)) for x in [S, K, T, r, sigma]):
-        raise TypeError("All inputs must be numeric")
-    if any(x < 0 for x in [S, K, T, sigma]):
-        raise ValueError("Stock price, strike price, time to maturity, and volatility must be positive")
-    if sigma > 1:
-        warnings.warn("Warning: Volatility > 100% specified")
-    if T > 3:
-        warnings.warn("Warning: Time to maturity > 3 years specified")
-    return True
-
-def test_black_scholes():
-    """Test Black-Scholes model implementation."""
-    try:
-        # Test case parameters
-        test_cases = [
-            {'S': 100, 'K': 100, 'T': 1, 'r': 0.05, 'sigma': 0.2},
-            {'S': 100, 'K': 110, 'T': 0.5, 'r': 0.02, 'sigma': 0.3},
-            {'S': 100, 'K': 90, 'T': 2, 'r': 0.03, 'sigma': 0.15}
-        ]
+# Calculate First-Order Greeks
+def calculate_greeks(option_type, S, K, T, r, sigma):
+    """
+    Calculate first-order option Greeks
+    
+    Parameters:
+    -----------
+    option_type : str
+        "Call" or "Put"
+    S : float
+        Current stock price
+    K : float
+        Strike price
+    T : float
+        Time to expiration in years
+    r : float
+        Risk-free interest rate (decimal)
+    sigma : float
+        Volatility (decimal)
         
-        results = []
-        for case in test_cases:
-            # Validate inputs
-            validate_inputs(**case)
-            
-            # Calculate call and put prices
-            call_price = black_scholes_calc(
-                case['S'], case['K'], case['T'],
-                case['r'], case['sigma'], 'call'
-            )
-            put_price = black_scholes_calc(
-                case['S'], case['K'], case['T'],
-                case['r'], case['sigma'], 'put'
-            )
-            
-            # Verify put-call parity
-            parity_diff = abs(
-                call_price - put_price -
-                case['S'] + case['K'] * np.exp(-case['r'] * case['T'])
-            )
-            
-            results.append({
-                'parameters': case,
-                'call_price': call_price,
-                'put_price': put_price,
-                'parity_check': parity_diff < 1e-10
-            })
-            
-        return results
-        
-    except Exception as e:
-        raise Exception(f"Black-Scholes test failed: {str(e)}")
-
-def test_binomial_model():
-    """Test Binomial model implementation."""
-    try:
-        # Test case parameters
-        test_cases = [
-            {'S': 100, 'K': 100, 'T': 1, 'r': 0.05, 'sigma': 0.2, 'n': 100},
-            {'S': 100, 'K': 110, 'T': 0.5, 'r': 0.02, 'sigma': 0.3, 'n': 50},
-            {'S': 100, 'K': 90, 'T': 2, 'r': 0.03, 'sigma': 0.15, 'n': 200}
-        ]
-        
-        results = []
-        for case in test_cases:
-            # Validate inputs
-            validate_inputs(**case)
-            
-            # Calculate prices using both European and American style
-            euro_call = binomial_calc(
-                case['S'], case['K'], case['T'], case['r'],
-                case['sigma'], case['n'], 'call', 'european'
-            )
-            euro_put = binomial_calc(
-                case['S'], case['K'], case['T'], case['r'],
-                case['sigma'], case['n'], 'put', 'european'
-            )
-            amer_call = binomial_calc(
-                case['S'], case['K'], case['T'], case['r'],
-                case['sigma'], case['n'], 'call', 'american'
-            )
-            amer_put = binomial_calc(
-                case['S'], case['K'], case['T'], case['r'],
-                case['sigma'], case['n'], 'put', 'american'
-            )
-            
-            # Verify early exercise premium
-            call_premium = amer_call - euro_call
-            put_premium = amer_put - euro_put
-            
-            results.append({
-                'parameters': case,
-                'european_call': euro_call,
-                'european_put': euro_put,
-                'american_call': amer_call,
-                'american_put': amer_put,
-                'early_exercise_call': call_premium,
-                'early_exercise_put': put_premium,
-                'validity_check': call_premium >= 0 and put_premium >= 0
-            })
-            
-        return results
-        
-    except Exception as e:
-        raise Exception(f"Binomial model test failed: {str(e)}")
-
-def test_monte_carlo():
-    """Test Monte Carlo simulation implementation."""
-    try:
-        # Test case parameters
-        test_cases = [
-            {'S': 100, 'K': 100, 'T': 1, 'r': 0.05, 'sigma': 0.2,
-             'n_sim': 100000, 'n_steps': 100},  # Increased number of simulations
-            {'S': 100, 'K': 110, 'T': 0.5, 'r': 0.02, 'sigma': 0.3,
-             'n_sim': 100000, 'n_steps': 50},
-            {'S': 100, 'K': 90, 'T': 2, 'r': 0.03, 'sigma': 0.15,
-             'n_sim': 100000, 'n_steps': 200}
-        ]
-        
-        results = []
-        for case in test_cases:
-            # Validate inputs
-            validate_inputs(**{k: case[k] for k in ['S', 'K', 'T', 'r', 'sigma']})
-            
-            # Calculate prices and error estimates
-            call_price, call_se, call_paths = monte_carlo_calc(
-                case['S'], case['K'], case['T'], case['r'],
-                case['sigma'], case['n_sim'], case['n_steps'], 'call'
-            )
-            put_price, put_se, put_paths = monte_carlo_calc(
-                case['S'], case['K'], case['T'], case['r'],
-                case['sigma'], case['n_sim'], case['n_steps'], 'put'
-            )
-            
-            # Compare with Black-Scholes for validation
-            bs_call = black_scholes_calc(
-                case['S'], case['K'], case['T'],
-                case['r'], case['sigma'], 'call'
-            )
-            bs_put = black_scholes_calc(
-                case['S'], case['K'], case['T'],
-                case['r'], case['sigma'], 'put'
-            )
-            
-            # Calculate relative errors
-            call_error = abs(call_price - bs_call) / bs_call if bs_call != 0 else abs(call_price)
-            put_error = abs(put_price - bs_put) / bs_put if bs_put != 0 else abs(put_price)
-            
-            # Use a more reasonable tolerance (5% instead of 2%)
-            tolerance = 0.05
-            accuracy_check = call_error < tolerance and put_error < tolerance
-            
-            results.append({
-                'parameters': case,
-                'monte_carlo_call': call_price,
-                'monte_carlo_put': put_price,
-                'call_std_error': call_se,
-                'put_std_error': put_se,
-                'bs_call': bs_call,
-                'bs_put': bs_put,
-                'relative_error_call': call_error,
-                'relative_error_put': put_error,
-                'accuracy_check': accuracy_check,
-                'tolerance_used': tolerance
-            })
-            
-            # Add detailed error information if accuracy check fails
-            if not accuracy_check:
-                print(f"""
-                Monte Carlo Test Case Failed:
-                Parameters: {case}
-                Call Price (MC): {call_price:.4f}, BS: {bs_call:.4f}, Error: {call_error:.4%}
-                Put Price (MC): {put_price:.4f}, BS: {bs_put:.4f}, Error: {put_error:.4%}
-                Standard Errors - Call: {call_se:.4f}, Put: {put_se:.4f}
-                """)
-            
-        return results
-        
-    except Exception as e:
-        print(f"Detailed Monte Carlo error: {str(e)}")
-        raise Exception(f"Monte Carlo test failed: {str(e)}")
-        
-# Strategy Calculations and Greeks
-
-def calculate_delta(strategy, spot_price, strike_price, time_to_maturity, risk_free_rate, volatility):
-    """Calculate position delta based on strategy type"""
-    delta = 0
-    if "Call" in strategy:
-        d1 = (np.log(spot_price/strike_price) +
-              (risk_free_rate + volatility**2/2)*time_to_maturity)/(volatility*np.sqrt(time_to_maturity))
+    Returns:
+    --------
+    dict: Dictionary of first-order Greeks (delta, gamma, theta, vega)
+    """
+    if T <= 0 or sigma <= 0:
+        # Handle edge cases
+        if option_type == "Call":
+            return {
+                'delta': 1.0 if S > K else 0.0,
+                'gamma': 0.0,
+                'theta': 0.0,
+                'vega': 0.0
+            }
+        else:  # Put
+            return {
+                'delta': -1.0 if S < K else 0.0,
+                'gamma': 0.0,
+                'theta': 0.0,
+                'vega': 0.0
+            }
+    
+    # Calculate d1 and d2 parameters
+    d1 = (np.log(S/K) + (r + sigma**2/2)*T)/(sigma*np.sqrt(T))
+    d2 = d1 - sigma*np.sqrt(T)
+    
+    # Common calculations
+    n_d1 = norm.pdf(d1)  # Standard normal probability density at d1
+    
+    # Gamma - second derivative of option price with respect to underlying price
+    # Same for both call and put
+    gamma = n_d1/(S * sigma * np.sqrt(T))
+    
+    # Vega - first derivative of option price with respect to volatility
+    # Same for both call and put, typically expressed per 1% change in volatility
+    vega = S * np.sqrt(T) * n_d1 * 0.01
+    
+    if option_type == "Call":
+        # Delta - first derivative of option price with respect to underlying price
         delta = norm.cdf(d1)
-    elif "Put" in strategy:
-        d1 = (np.log(spot_price/strike_price) +
-              (risk_free_rate + volatility**2/2)*time_to_maturity)/(volatility*np.sqrt(time_to_maturity))
+        
+        # Theta - first derivative of option price with respect to time
+        # Typically expressed as daily decay (divided by 365)
+        theta = (-S * n_d1 * sigma/(2 * np.sqrt(T)) -
+                r * K * np.exp(-r * T) * norm.cdf(d2)) / 365.0
+    else:  # Put
         delta = -norm.cdf(-d1)
-    return delta
+        theta = (-S * n_d1 * sigma/(2 * np.sqrt(T)) +
+                r * K * np.exp(-r * T) * norm.cdf(-d2)) / 365.0
     
-def calculate_strategy_greeks(strategy_type, spot_price, strike_price, time_to_maturity, risk_free_rate, volatility):
-    """Calculate Greeks for selected option strategy"""
-    
-    def d1(S, K, T, r, sigma):
-        return (np.log(S/K) + (r + sigma**2/2)*T)/(sigma*np.sqrt(T))
-    
-    def d2(S, K, T, r, sigma):
-        return d1(S, K, T, r, sigma) - sigma*np.sqrt(T)
-
-    # Calculate base Greeks
-    d1_calc = d1(spot_price, strike_price, time_to_maturity, risk_free_rate, volatility)
-    d2_calc = d2(spot_price, strike_price, time_to_maturity, risk_free_rate, volatility)
-    
-    greeks = {
-        'delta': 0,
-        'gamma': 0,
-        'theta': 0,
-        'vega': 0
+    return {
+        'delta': delta,
+        'gamma': gamma,
+        'theta': theta,
+        'vega': vega
     }
-    
-    # Base calculations
-    call_delta = norm.cdf(d1_calc)
-    put_delta = -norm.cdf(-d1_calc)
-    gamma = norm.pdf(d1_calc)/(spot_price * volatility * np.sqrt(time_to_maturity))
-    
-    call_theta = (-spot_price * norm.pdf(d1_calc) * volatility/(2 * np.sqrt(time_to_maturity)) -
-                 risk_free_rate * strike_price * np.exp(-risk_free_rate * time_to_maturity) * norm.cdf(d2_calc))
-    
-    put_theta = (-spot_price * norm.pdf(d1_calc) * volatility/(2 * np.sqrt(time_to_maturity)) +
-                risk_free_rate * strike_price * np.exp(-risk_free_rate * time_to_maturity) * norm.cdf(-d2_calc))
-    
-    vega = spot_price * np.sqrt(time_to_maturity) * norm.pdf(d1_calc)
 
-    # Strategy-specific Greek adjustments
-    if "Call" in strategy_type:
-        if "Long" in strategy_type or strategy_type == "Bull Call Spread":
-            greeks['delta'] = call_delta
-            greeks['gamma'] = gamma
-            greeks['theta'] = call_theta
-            greeks['vega'] = vega
-        elif "Short" in strategy_type or "Writing" in strategy_type:
-            greeks['delta'] = -call_delta
-            greeks['gamma'] = -gamma
-            greeks['theta'] = -call_theta
-            greeks['vega'] = -vega
-    elif "Put" in strategy_type:
-        if "Long" in strategy_type or strategy_type == "Bear Put Spread":
-            greeks['delta'] = put_delta
-            greeks['gamma'] = gamma
-            greeks['theta'] = put_theta
-            greeks['vega'] = vega
-        elif "Short" in strategy_type or "Writing" in strategy_type:
-            greeks['delta'] = -put_delta
-            greeks['gamma'] = -gamma
-            greeks['theta'] = -put_theta
-            greeks['vega'] = -vega
-    elif strategy_type == "Long Straddle":
-        greeks['delta'] = call_delta + put_delta
-        greeks['gamma'] = 2 * gamma
-        greeks['theta'] = call_theta + put_theta
-        greeks['vega'] = 2 * vega
-    elif strategy_type == "Short Straddle":
-        greeks['delta'] = -(call_delta + put_delta)
-        greeks['gamma'] = -2 * gamma
-        greeks['theta'] = -(call_theta + put_theta)
-        greeks['vega'] = -2 * vega
-    elif strategy_type in ["Iron Butterfly", "Iron Condor"]:
-        greeks['delta'] = 0  # Near delta-neutral
-        greeks['gamma'] = -gamma  # Negative gamma
-        greeks['theta'] = -(call_theta + put_theta)  # Positive theta
-        greeks['vega'] = -2 * vega  # Negative vega
-    else:
-        # Default to simple long call Greeks if strategy not specifically handled
-        greeks['delta'] = call_delta
-        greeks['gamma'] = gamma
-        greeks['theta'] = call_theta
-        greeks['vega'] = vega
+# Calculate Higher-Order Greeks
+def calculate_advanced_greeks(option_type, S, K, T, r, sigma):
+    """
+    Calculate higher-order option Greeks
+    
+    Parameters:
+    -----------
+    option_type : str
+        "call" or "put"
+    S : float
+        Current stock price
+    K : float
+        Strike price
+    T : float
+        Time to expiration in years
+    r : float
+        Risk-free interest rate (decimal)
+    sigma : float
+        Volatility (decimal)
+        
+    Returns:
+    --------
+    dict: Dictionary of higher-order Greeks
+    """
+    if T <= 0 or sigma <= 0:
+        return {
+            'vanna': 0.0, 'charm': 0.0, 'volga': 0.0,
+            'veta': 0.0, 'speed': 0.0, 'zomma': 0.0,
+            'color': 0.0, 'ultima': 0.0
+        }
+    
+    # Calculate parameters
+    sqrt_t = np.sqrt(T)
+    d1 = (np.log(S/K) + (r + sigma**2/2)*T)/(sigma*sqrt_t)
+    d2 = d1 - sigma*sqrt_t
+    
+    # Standard normal PDF values
+    nd1 = norm.pdf(d1)
+    nd2 = norm.pdf(d2)
+    
+    # Higher-order Greeks (most are same for calls and puts)
+    
+    # Vanna/DdeltaDvol - sensitivity of delta to volatility changes
+    vanna = -nd1 * d2 / sigma
+    
+    # Volga/Vomma - second derivative of option price with respect to volatility
+    volga = S * sqrt_t * nd1 * d1 * d2 / sigma
+    
+    # Charm/DdeltaDtime - rate of change of delta with respect to time
+    if option_type.lower() == 'call':
+        charm = -nd1 * (r/(sigma*sqrt_t) - d2/(2*T))
+    else:  # put
+        charm = nd1 * (r/(sigma*sqrt_t) - d2/(2*T))
+    
+    # Veta/DvegaDtime - rate of change of vega with respect to time
+    veta = -S * nd1 * sqrt_t * (r*d1/(sigma*sqrt_t) - (1+d1*d2)/(2*T))
+    
+    # Speed - third derivative of option price with respect to underlying price
+    speed = -nd1 * d1/(S**2 * sigma * sqrt_t) * (1 + d1/(sigma * sqrt_t))
+    
+    # Zomma - sensitivity of gamma to volatility changes
+    zomma = nd1 * (d1*d2 - 1)/(S * sigma)
+    
+    # Color/DgammaDtime - rate of change of gamma with respect to time
+    color = -nd1 * (r*d2 + d1*d2/(2*T) - (1+d1*d2)/(2*T) + r*d1/(sigma*sqrt_t))/(S * sigma * sqrt_t)
+    
+    # Ultima - sensitivity of volga to volatility changes
+    ultima = -S * sqrt_t * nd1 / (sigma**2) * (d1*d2*(1-d1*d2) + d1**2 + d2**2)
+    
+    return {
+        'vanna': vanna, 'charm': charm, 'volga': volga,
+        'veta': veta, 'speed': speed, 'zomma': zomma,
+        'color': color, 'ultima': ultima
+    }
 
-    return greeks
-
+# Calculate Option Strategy Payoffs
 def calculate_strategy_pnl(strategy_type, spot_range, current_price, strike_price, time_to_maturity, risk_free_rate, volatility, call_value=0, put_value=0):
-    """Calculate P&L for all available strategies"""
-    # Add boundary checks
+    """
+    Calculate P&L for option strategies based on precise mathematical formulas
+    
+    Parameters:
+    -----------
+    strategy_type : str
+        Type of option strategy
+    spot_range : array
+        Range of spot prices for calculation
+    current_price : float
+        Current price of underlying
+    strike_price : float
+        Strike price
+    time_to_maturity : float
+        Time to expiration in years
+    risk_free_rate : float
+        Risk-free interest rate (decimal)
+    volatility : float
+        Volatility (decimal)
+    call_value, put_value : float
+        Current option values (prices)
+        
+    Returns:
+    --------
+    array: P&L values for each spot price in the range
+    """
+    # Validate inputs
     if not isinstance(spot_range, (list, np.ndarray)):
         raise ValueError("spot_range must be a list or numpy array")
         
-    # Add validation for numerical inputs
-    for param in [current_price, strike_price, time_to_maturity, risk_free_rate, volatility]:
-        if not isinstance(param, (int, float)) or param < 0:
-            raise ValueError(f"Invalid parameter value: {param}")
-            
-    pnl = []
-    for spot in spot_range:
-        # Calculate base option values
-        call_price = black_scholes_calc(spot, strike_price, time_to_maturity,
-                                      risk_free_rate, volatility, 'call')
-        put_price = black_scholes_calc(spot, strike_price, time_to_maturity,
-                                     risk_free_rate, volatility, 'put')
-        
-        # Define common strikes for spreads
-        lower_strike = strike_price * 0.9
-        upper_strike = strike_price * 1.1
-        middle_strike = strike_price
-        
-        current_pnl = 0
-        
-        # Call Option Strategies
+    # Define common strikes for spreads
+    lower_strike = strike_price * 0.9
+    upper_strike = strike_price * 1.1
+    
+    # Additional strikes for Iron Condor
+    very_lower_strike = lower_strike * 0.95
+    very_upper_strike = upper_strike * 1.05
+    
+    # Initialize P&L array
+    pnl = np.zeros(len(spot_range))
+    
+    # Calculate option values at entry if not provided
+    atm_call_value = call_value if call_value > 0 else black_scholes_calc(
+        current_price, strike_price, time_to_maturity, risk_free_rate, volatility, 'call')
+    atm_put_value = put_value if put_value > 0 else black_scholes_calc(
+        current_price, strike_price, time_to_maturity, risk_free_rate, volatility, 'put')
+    
+    # Pre-calculate option values at other strikes for spreads
+    lower_call_value = black_scholes_calc(
+        current_price, lower_strike, time_to_maturity, risk_free_rate, volatility, 'call')
+    upper_call_value = black_scholes_calc(
+        current_price, upper_strike, time_to_maturity, risk_free_rate, volatility, 'call')
+    lower_put_value = black_scholes_calc(
+        current_price, lower_strike, time_to_maturity, risk_free_rate, volatility, 'put')
+    upper_put_value = black_scholes_calc(
+        current_price, upper_strike, time_to_maturity, risk_free_rate, volatility, 'put')
+    
+    # For Iron Condor additional values
+    very_lower_put_value = black_scholes_calc(
+        current_price, very_lower_strike, time_to_maturity, risk_free_rate, volatility, 'put')
+    very_upper_call_value = black_scholes_calc(
+        current_price, very_upper_strike, time_to_maturity, risk_free_rate, volatility, 'call')
+    
+    for i, spot in enumerate(spot_range):
+        # Calculate payoff based on strategy
         if strategy_type == "Covered Call Writing":
-            current_pnl = (spot - current_price) + (call_value - call_price)
-            
+            # (ST - S0) + C if ST ≤ K, (K - S0) + C if ST > K
+            if spot <= strike_price:
+                pnl[i] = (spot - current_price) + atm_call_value
+            else:
+                pnl[i] = (strike_price - current_price) + atm_call_value
+                
         elif strategy_type == "Long Call":
-            current_pnl = max(0, spot - strike_price) - call_value
-            
-        elif strategy_type == "Protected Short Sale":
-            current_pnl = (current_price - spot) + max(0, spot - strike_price) - call_value
-            
-        elif strategy_type == "Reverse Hedge":
-            current_pnl = max(0, spot - strike_price) + max(0, strike_price - spot) - (call_value + put_value)
-            
-        elif strategy_type == "Naked Call Writing":
-            current_pnl = call_value - max(0, spot - strike_price)
-            
-        elif strategy_type == "Ratio Call Writing":
-            current_pnl = (spot - current_price) + 2 * (call_value - max(0, spot - strike_price))
+            # max(0, ST - K) - C
+            pnl[i] = max(0, spot - strike_price) - atm_call_value
             
         elif strategy_type == "Bull Call Spread":
-            upper_call = black_scholes_calc(spot, upper_strike, time_to_maturity,
-                                          risk_free_rate, volatility, 'call')
-            current_pnl = max(0, spot - strike_price) - max(0, spot - upper_strike) - (call_value - upper_call)
+            # Long lower strike call, short higher strike call
+            # max(0, ST - K1) - max(0, ST - K2) - Net Debit
+            pnl[i] = max(0, spot - lower_strike) - max(0, spot - upper_strike) - (lower_call_value - upper_call_value)
             
         elif strategy_type == "Bear Call Spread":
-            lower_call = black_scholes_calc(spot, lower_strike, time_to_maturity,
-                                          risk_free_rate, volatility, 'call')
-            current_pnl = (call_value - lower_call) - (max(0, spot - strike_price) - max(0, spot - lower_strike))
+            # Short lower strike call, long higher strike call
+            # Net Credit - max(0, ST - K1) + max(0, ST - K2)
+            pnl[i] = (lower_call_value - upper_call_value) - max(0, spot - lower_strike) + max(0, spot - upper_strike)
             
-        elif strategy_type == "Calendar Call Spread":
-            long_call = black_scholes_calc(spot, strike_price, time_to_maturity * 2,
-                                         risk_free_rate, volatility, 'call')
-            current_pnl = (long_call - call_price) - (long_call - call_value)
-            
-        elif strategy_type == "Butterfly Call Spread":
-            lower_call = black_scholes_calc(spot, lower_strike, time_to_maturity, risk_free_rate, volatility, 'call')
-            upper_call = black_scholes_calc(spot, upper_strike, time_to_maturity, risk_free_rate, volatility, 'call')
-            current_pnl = (max(0, spot - lower_strike) - 2*max(0, spot - strike_price) +
-                          max(0, spot - upper_strike)) - (lower_call - 2*call_value + upper_call)
-            
-        elif strategy_type == "Ratio Call Spread":
-            upper_call = black_scholes_calc(spot, upper_strike, time_to_maturity, risk_free_rate, volatility, 'call')
-            current_pnl = max(0, spot - strike_price) - 2*max(0, spot - upper_strike) - (call_value - 2*upper_call)
-            
-        elif strategy_type == "Ratio Calendar Call Spread":
-            long_call = black_scholes_calc(spot, strike_price, time_to_maturity * 2, risk_free_rate, volatility, 'call')
-            current_pnl = long_call - 2*call_price - (long_call - 2*call_value)
-            
-        elif strategy_type == "Delta-Neutral Calendar Spread":
-            long_call = black_scholes_calc(spot, strike_price, time_to_maturity * 2, risk_free_rate, volatility, 'call')
-            delta_ratio = calculate_delta(strategy, spot)
-            current_pnl = delta_ratio * (long_call - call_price) - (long_call - call_value)
-            
-        elif strategy_type == "Reverse Calendar Call Spread":
-            long_call = black_scholes_calc(spot, strike_price, time_to_maturity * 2, risk_free_rate, volatility, 'call')
-            current_pnl = call_price - long_call - (call_value - long_call)
-            
-        elif strategy_type == "Reverse Ratio Call Spread":
-            upper_call = black_scholes_calc(spot, upper_strike, time_to_maturity, risk_free_rate, volatility, 'call')
-            current_pnl = 2*max(0, spot - strike_price) - max(0, spot - upper_strike) - (2*call_value - upper_call)
-            
-        elif strategy_type == "Diagonal Bull Call Spread":
-            long_call = black_scholes_calc(spot, lower_strike, time_to_maturity * 2, risk_free_rate, volatility, 'call')
-            current_pnl = (long_call - call_price) - (long_call - call_value)
-            
-        # Put Option Strategies
         elif strategy_type == "Long Put":
-            current_pnl = max(0, strike_price - spot) - put_value
+            # max(0, K - ST) - P
+            pnl[i] = max(0, strike_price - spot) - atm_put_value
             
         elif strategy_type == "Protective Put":
-            current_pnl = (spot - current_price) + max(0, strike_price - spot) - put_value
-            
-        elif strategy_type == "Put with Covered Call":
-            current_pnl = ((spot - current_price) +
-                          max(0, strike_price - spot) - put_value +
-                          (call_value - max(0, spot - strike_price)))
-            
-        elif strategy_type == "No-Cost Collar":
-            upper_call = black_scholes_calc(spot, upper_strike, time_to_maturity, risk_free_rate, volatility, 'call')
-            lower_put = black_scholes_calc(spot, lower_strike, time_to_maturity, risk_free_rate, volatility, 'put')
-            current_pnl = ((spot - current_price) +
-                          max(0, lower_strike - spot) -
-                          max(0, spot - upper_strike) -
-                          (lower_put - upper_call))
-            
-        elif strategy_type == "Naked Put Writing":
-            current_pnl = put_value - max(0, strike_price - spot)
-            
-        elif strategy_type == "Covered Put Sale":
-            current_pnl = (current_price - spot) + (put_value - max(0, strike_price - spot))
-            
-        elif strategy_type == "Ratio Put Writing":
-            current_pnl = 2 * put_value - 2 * max(0, strike_price - spot)
-            
-        elif strategy_type == "Bear Put Spread":
-            lower_put = black_scholes_calc(spot, lower_strike, time_to_maturity, risk_free_rate, volatility, 'put')
-            current_pnl = max(0, strike_price - spot) - max(0, lower_strike - spot) - (put_value - lower_put)
+            # (ST - S0) + max(0, K - ST) - P
+            pnl[i] = (spot - current_price) + max(0, strike_price - spot) - atm_put_value
             
         elif strategy_type == "Bull Put Spread":
-            upper_put = black_scholes_calc(spot, upper_strike, time_to_maturity, risk_free_rate, volatility, 'put')
-            current_pnl = (put_value - upper_put) - (max(0, strike_price - spot) - max(0, upper_strike - spot))
+            # Short higher strike put, long lower strike put
+            # Net Credit - max(0, K1 - ST) + max(0, K2 - ST)
+            pnl[i] = (upper_put_value - lower_put_value) - max(0, upper_strike - spot) + max(0, lower_strike - spot)
             
-        elif strategy_type == "Calendar Put Spread":
-            long_put = black_scholes_calc(spot, strike_price, time_to_maturity * 2, risk_free_rate, volatility, 'put')
-            current_pnl = (long_put - put_price) - (long_put - put_value)
+        elif strategy_type == "Bear Put Spread":
+            # Long higher strike put, short lower strike put
+            # max(0, K1 - ST) - max(0, K2 - ST) - Net Debit
+            pnl[i] = max(0, upper_strike - spot) - max(0, lower_strike - spot) - (upper_put_value - lower_put_value)
             
-        elif strategy_type == "Butterfly Put Spread":
-            lower_put = black_scholes_calc(spot, lower_strike, time_to_maturity, risk_free_rate, volatility, 'put')
-            upper_put = black_scholes_calc(spot, upper_strike, time_to_maturity, risk_free_rate, volatility, 'put')
-            current_pnl = (max(0, lower_strike - spot) - 2*max(0, strike_price - spot) +
-                          max(0, upper_strike - spot)) - (lower_put - 2*put_value + upper_put)
-            
-        # Combined Strategies
         elif strategy_type == "Long Straddle":
-            current_pnl = max(spot - strike_price, strike_price - spot) - (call_value + put_value)
+            # max(0, ST - K) + max(0, K - ST) - (C + P)
+            pnl[i] = max(0, spot - strike_price) + max(0, strike_price - spot) - (atm_call_value + atm_put_value)
             
         elif strategy_type == "Short Straddle":
-            current_pnl = (call_value + put_value) - max(spot - strike_price, strike_price - spot)
-            
-        elif strategy_type == "Long Strangle":
-            upper_call = black_scholes_calc(spot, upper_strike, time_to_maturity, risk_free_rate, volatility, 'call')
-            lower_put = black_scholes_calc(spot, lower_strike, time_to_maturity, risk_free_rate, volatility, 'put')
-            current_pnl = max(spot - upper_strike, lower_strike - spot) - (upper_call + lower_put)
-            
-        elif strategy_type == "Short Strangle":
-            upper_call = black_scholes_calc(spot, upper_strike, time_to_maturity, risk_free_rate, volatility, 'call')
-            lower_put = black_scholes_calc(spot, lower_strike, time_to_maturity, risk_free_rate, volatility, 'put')
-            current_pnl = (upper_call + lower_put) - max(spot - upper_strike, lower_strike - spot)
-            
-        elif strategy_type == "Synthetic Long Stock":
-            current_pnl = ((spot - strike_price) +
-                          (max(0, spot - strike_price) - max(0, strike_price - spot)) -
-                          (call_value - put_value))
-            
-        elif strategy_type == "Synthetic Short Stock":
-            current_pnl = ((strike_price - spot) +
-                          (max(0, strike_price - spot) - max(0, spot - strike_price)) -
-                          (put_value - call_value))
+            # (C + P) - max(0, ST - K) - max(0, K - ST)
+            pnl[i] = (atm_call_value + atm_put_value) - max(0, spot - strike_price) - max(0, strike_price - spot)
             
         elif strategy_type == "Iron Butterfly":
-            lower_put = black_scholes_calc(spot, lower_strike, time_to_maturity, risk_free_rate, volatility, 'put')
-            upper_call = black_scholes_calc(spot, upper_strike, time_to_maturity, risk_free_rate, volatility, 'call')
-            current_pnl = ((put_value + call_value - lower_put - upper_call) -
-                          (max(0, strike_price - spot) + max(0, spot - strike_price) -
-                           max(0, lower_strike - spot) - max(0, spot - upper_strike)))
+            # Short ATM put, short ATM call, long OTM put, long OTM call
+            # Net Credit - max(0, ST - K) + max(0, ST - (K + Δ)) - max(0, K - ST) + max(0, (K - Δ) - ST)
+            net_credit = atm_call_value + atm_put_value - upper_call_value - lower_put_value
+            pnl[i] = net_credit - max(0, spot - strike_price) + max(0, spot - upper_strike) - max(0, strike_price - spot) + max(0, lower_strike - spot)
             
         elif strategy_type == "Iron Condor":
-            lower_put = black_scholes_calc(spot, lower_strike * 0.95, time_to_maturity, risk_free_rate, volatility, 'put')
-            upper_call = black_scholes_calc(spot, upper_strike * 1.05, time_to_maturity, risk_free_rate, volatility, 'call')
-            mid_lower_put = black_scholes_calc(spot, lower_strike, time_to_maturity, risk_free_rate, volatility, 'put')
-            mid_upper_call = black_scholes_calc(spot, upper_strike, time_to_maturity, risk_free_rate, volatility, 'call')
-            current_pnl = ((mid_upper_call + mid_lower_put - lower_put - upper_call) -
-                          (max(0, lower_strike - spot) - max(0, lower_strike * 0.95 - spot) +
-                           max(0, spot - upper_strike) - max(0, spot - upper_strike * 1.05)))
-        
-        pnl.append(current_pnl)
+            # Bull put spread + bear call spread
+            # Net Credit - max(0, K1 - ST) + max(0, (K1 - Δ) - ST) - max(0, ST - K2) + max(0, ST - (K2 + Δ))
+            net_credit = (upper_put_value - very_lower_put_value) + (lower_call_value - very_upper_call_value)
+            pnl[i] = net_credit - max(0, upper_strike - spot) + max(0, very_lower_strike - spot) - max(0, spot - lower_strike) + max(0, spot - very_upper_strike)
     
     return pnl
 
-
-# Risk Profile Generation
-def generate_risk_profile_table(strategy, current_price, strike_price, time_to_maturity,
-                              risk_free_rate, volatility):
-    """Generate a comprehensive risk profile table for the strategy"""
+# Calculate Implied Volatility
+def implied_volatility(market_price, S, K, T, r, option_type='call', initial_guess=0.2, precision=1e-8):
+    """
+    Calculate implied volatility using optimization
     
-    def calculate_margin_requirement(strategy_type):
-        """Calculate margin requirement based on strategy type"""
-        if strategy_type in ["Naked Call Writing", "Naked Put Writing"]:
-            return max(current_price * 0.5,
-                      current_price * 0.2 + max(0, current_price - strike_price))
-        elif strategy_type in ["Covered Call Writing", "Protective Put"]:
-            return current_price
-        elif "Spread" in strategy_type:
-            return abs(strike_price - strike_price * 0.9)  # Width of spread
-        elif "Iron" in strategy_type:
-            return abs(strike_price - strike_price * 0.9)  # Width of spread
-        else:
-            return max(0, strike_price * 0.2)  # Basic requirement for long options
-    
-    def calculate_profit_probability(strategy_type):
-        """Calculate probability of profit based on strategy type and market conditions"""
-        sigma = volatility * np.sqrt(time_to_maturity)
+    Parameters:
+    -----------
+    market_price : float
+        Observed market price of the option
+    S, K, T, r : float
+        Stock price, strike price, time to maturity (years), risk-free rate
+    option_type : str
+        'call' or 'put'
+    initial_guess : float
+        Initial volatility estimate
+    precision : float
+        Convergence threshold
         
-        if "Call" in strategy_type and "Writing" in strategy_type:
-            # For short calls, probability OTM at expiration
-            return norm.cdf((np.log(strike_price/current_price) +
-                           (risk_free_rate - volatility**2/2)*time_to_maturity)/(sigma))
-        elif "Put" in strategy_type and "Writing" in strategy_type:
-            # For short puts, probability OTM at expiration
-            return 1 - norm.cdf((np.log(strike_price/current_price) +
-                               (risk_free_rate - volatility**2/2)*time_to_maturity)/(sigma))
-        elif "Spread" in strategy_type:
-            # For spreads, probability between strikes
-            upper_strike = strike_price * 1.1
-            return (norm.cdf(np.log(upper_strike/current_price)/(sigma)) -
-                   norm.cdf(np.log(strike_price/current_price)/(sigma)))
+    Returns:
+    --------
+    float: Implied volatility value
+    """
+    def objective(sigma):
+        price = black_scholes_calc(S, K, T, r, sigma, option_type)
+        return abs(price - market_price)
+    
+    result = minimize(objective, initial_guess, method='L-BFGS-B', bounds=[(0.001, 5.0)])
+    if result.success:
+        return result.x[0]
+    else:
+        raise ValueError(f"Implied volatility calculation failed: {result.message}")
+
+# Calculate Strategy Greeks
+def calculate_strategy_greeks(strategy_type, spot_price, strike_price, time_to_maturity, risk_free_rate, volatility):
+    """
+    Calculate Greeks for option strategies
+    
+    Parameters:
+    -----------
+    strategy_type : str
+        Type of option strategy
+    spot_price : float
+        Current price of underlying
+    strike_price : float
+        Strike price
+    time_to_maturity : float
+        Time to expiration in years
+    risk_free_rate : float
+        Risk-free interest rate (decimal)
+    volatility : float
+        Volatility (decimal)
+        
+    Returns:
+    --------
+    dict: Strategy Greeks
+    """
+    # Define strikes for spreads
+    lower_strike = strike_price * 0.9
+    upper_strike = strike_price * 1.1
+    
+    # Initialize Greeks
+    greeks = {'delta': 0, 'gamma': 0, 'theta': 0, 'vega': 0}
+    
+    # Calculate basic Greeks for standard options
+    call_greeks = calculate_greeks("Call", spot_price, strike_price, time_to_maturity, risk_free_rate, volatility)
+    put_greeks = calculate_greeks("Put", spot_price, strike_price, time_to_maturity, risk_free_rate, volatility)
+    
+    # Calculate Greeks for spread options
+    upper_call_greeks = calculate_greeks("Call", spot_price, upper_strike, time_to_maturity, risk_free_rate, volatility)
+    lower_call_greeks = calculate_greeks("Call", spot_price, lower_strike, time_to_maturity, risk_free_rate, volatility)
+    upper_put_greeks = calculate_greeks("Put", spot_price, upper_strike, time_to_maturity, risk_free_rate, volatility)
+    lower_put_greeks = calculate_greeks("Put", spot_price, lower_strike, time_to_maturity, risk_free_rate, volatility)
+    
+    # Calculate Greeks for Iron Condor
+    very_lower_strike = lower_strike * 0.95
+    very_upper_strike = upper_strike * 1.05
+    very_lower_put_greeks = calculate_greeks("Put", spot_price, very_lower_strike, time_to_maturity, risk_free_rate, volatility)
+    very_upper_call_greeks = calculate_greeks("Call", spot_price, very_upper_strike, time_to_maturity, risk_free_rate, volatility)
+    
+    # Calculate strategy-specific Greeks based on portfolio compositions
+    if strategy_type == "Covered Call Writing":
+        greeks['delta'] = 1 - call_greeks['delta']
+        greeks['gamma'] = -call_greeks['gamma']
+        greeks['theta'] = -call_greeks['theta']
+        greeks['vega'] = -call_greeks['vega']
+        
+    elif strategy_type == "Long Call":
+        greeks = call_greeks
+        
+    elif strategy_type == "Protected Short Sale":
+        greeks['delta'] = -1 + call_greeks['delta']
+        greeks['gamma'] = call_greeks['gamma']
+        greeks['theta'] = call_greeks['theta']
+        greeks['vega'] = call_greeks['vega']
+        
+    elif strategy_type == "Reverse Hedge":
+        greeks['delta'] = call_greeks['delta'] + put_greeks['delta']
+        greeks['gamma'] = call_greeks['gamma'] + put_greeks['gamma']
+        greeks['theta'] = call_greeks['theta'] + put_greeks['theta']
+        greeks['vega'] = call_greeks['vega'] + put_greeks['vega']
+        
+    elif strategy_type == "Naked Call Writing":
+        greeks['delta'] = -call_greeks['delta']
+        greeks['gamma'] = -call_greeks['gamma']
+        greeks['theta'] = -call_greeks['theta']
+        greeks['vega'] = -call_greeks['vega']
+        
+    elif strategy_type == "Bull Call Spread":
+        greeks['delta'] = lower_call_greeks['delta'] - upper_call_greeks['delta']
+        greeks['gamma'] = lower_call_greeks['gamma'] - upper_call_greeks['gamma']
+        greeks['theta'] = lower_call_greeks['theta'] - upper_call_greeks['theta']
+        greeks['vega'] = lower_call_greeks['vega'] - upper_call_greeks['vega']
+        
+    elif strategy_type == "Bear Call Spread":
+        greeks['delta'] = -lower_call_greeks['delta'] + upper_call_greeks['delta']
+        greeks['gamma'] = -lower_call_greeks['gamma'] + upper_call_greeks['gamma']
+        greeks['theta'] = -lower_call_greeks['theta'] + upper_call_greeks['theta']
+        greeks['vega'] = -lower_call_greeks['vega'] + upper_call_greeks['vega']
+        
+    elif strategy_type == "Long Put":
+        greeks = put_greeks
+        
+    elif strategy_type == "Protective Put":
+        greeks['delta'] = 1 + put_greeks['delta']
+        greeks['gamma'] = put_greeks['gamma']
+        greeks['theta'] = put_greeks['theta']
+        greeks['vega'] = put_greeks['vega']
+        
+    elif strategy_type == "Bull Put Spread":
+        # Short higher strike put, long lower strike put
+        greeks['delta'] = -upper_put_greeks['delta'] + lower_put_greeks['delta']
+        greeks['gamma'] = -upper_put_greeks['gamma'] + lower_put_greeks['gamma']
+        greeks['theta'] = -upper_put_greeks['theta'] + lower_put_greeks['theta']
+        greeks['vega'] = -upper_put_greeks['vega'] + lower_put_greeks['vega']
+        
+    elif strategy_type == "Bear Put Spread":
+        # Long higher strike put, short lower strike put
+        greeks['delta'] = upper_put_greeks['delta'] - lower_put_greeks['delta']
+        greeks['gamma'] = upper_put_greeks['gamma'] - lower_put_greeks['gamma']
+        greeks['theta'] = upper_put_greeks['theta'] - lower_put_greeks['theta']
+        greeks['vega'] = upper_put_greeks['vega'] - lower_put_greeks['vega']
+        
+    elif strategy_type == "Long Straddle":
+        greeks['delta'] = call_greeks['delta'] + put_greeks['delta']
+        greeks['gamma'] = call_greeks['gamma'] + put_greeks['gamma']
+        greeks['theta'] = call_greeks['theta'] + put_greeks['theta']
+        greeks['vega'] = call_greeks['vega'] + put_greeks['vega']
+        
+    elif strategy_type == "Short Straddle":
+        greeks['delta'] = -call_greeks['delta'] - put_greeks['delta']
+        greeks['gamma'] = -call_greeks['gamma'] - put_greeks['gamma']
+        greeks['theta'] = -call_greeks['theta'] - put_greeks['theta']
+        greeks['vega'] = -call_greeks['vega'] - put_greeks['vega']
+        
+    elif strategy_type == "Iron Butterfly":
+        greeks['delta'] = lower_put_greeks['delta'] - put_greeks['delta'] - call_greeks['delta'] + upper_call_greeks['delta']
+        greeks['gamma'] = lower_put_greeks['gamma'] - put_greeks['gamma'] - call_greeks['gamma'] + upper_call_greeks['gamma']
+        greeks['theta'] = lower_put_greeks['theta'] - put_greeks['theta'] - call_greeks['theta'] + upper_call_greeks['theta']
+        greeks['vega'] = lower_put_greeks['vega'] - put_greeks['vega'] - call_greeks['vega'] + upper_call_greeks['vega']
+        
+    elif strategy_type == "Iron Condor":
+        greeks['delta'] = very_lower_put_greeks['delta'] - lower_put_greeks['delta'] - upper_call_greeks['delta'] + very_upper_call_greeks['delta']
+        greeks['gamma'] = very_lower_put_greeks['gamma'] - lower_put_greeks['gamma'] - upper_call_greeks['gamma'] + very_upper_call_greeks['gamma']
+        greeks['theta'] = very_lower_put_greeks['theta'] - lower_put_greeks['theta'] - upper_call_greeks['theta'] + very_upper_call_greeks['theta']
+        greeks['vega'] = very_lower_put_greeks['vega'] - lower_put_greeks['vega'] - upper_call_greeks['vega'] + very_upper_call_greeks['vega']
+    
+    return greeks
+
+# Value at Risk (VaR) Calculator
+def var_calculator(strategies, quantities, spot_price, strikes, maturities, rates, vols,
+                 confidence=0.95, horizon=1/252, n_simulations=10000):
+    """
+    Calculate Value-at-Risk for an options portfolio using Monte Carlo simulation
+    
+    Parameters:
+    -----------
+    strategies : list
+        List of strategy types
+    quantities : list
+        Number of positions for each strategy
+    spot_price, strikes, maturities, rates, vols : lists
+        Parameters for each position
+    confidence : float
+        Confidence level (default: 95%)
+    horizon : float
+        Risk horizon in years (default: 1 day)
+    n_simulations : int
+        Number of Monte Carlo simulations
+    
+    Returns:
+    --------
+    dict: VaR results and risk metrics
+    """
+    # Validate inputs
+    if len(strategies) != len(quantities) or len(quantities) != len(strikes):
+        raise ValueError("Input arrays must have the same length")
+    
+    n_positions = len(strategies)
+    
+    # Convert lists to arrays
+    strikes = np.array(strikes)
+    maturities = np.array(maturities)
+    rates = np.array(rates) if isinstance(rates, (list, np.ndarray)) else np.ones(n_positions) * rates
+    vols = np.array(vols)
+    quantities = np.array(quantities)
+    
+    # Generate random price paths
+    np.random.seed(42)  # For reproducibility
+    annual_vol = np.sqrt(np.mean(vols**2))  # Portfolio volatility estimate
+    price_changes = np.random.normal(
+        (rates.mean() - 0.5 * annual_vol**2) * horizon,
+        annual_vol * np.sqrt(horizon),
+        n_simulations
+    )
+    
+    simulated_prices = spot_price * np.exp(price_changes)
+    
+    # Calculate current portfolio value
+    current_portfolio_value = 0
+    for i in range(n_positions):
+        if 'Call' in strategies[i]:
+            option_price = black_scholes_calc(spot_price, strikes[i], maturities[i], rates[i], vols[i], 'call')
         else:
-            # Default case for long options
-            return 1 - norm.cdf((np.log(strike_price/current_price))/(sigma))
+            option_price = black_scholes_calc(spot_price, strikes[i], maturities[i], rates[i], vols[i], 'put')
+        current_portfolio_value += quantities[i] * option_price
     
-    # Calculate break-even points
-    spot_range = np.linspace(current_price * 0.5, current_price * 1.5, 1000)
-    pnl = calculate_strategy_pnl(strategy, spot_range)
-    break_even_indices = np.where(np.diff(np.signbit(pnl)))[0]
-    break_even_points = [spot_range[i] for i in break_even_indices]
+    # Calculate simulated portfolio values
+    simulated_portfolio_values = np.zeros(n_simulations)
+    for j in range(n_simulations):
+        sim_price = simulated_prices[j]
+        portfolio_value = 0
+        
+        for i in range(n_positions):
+            remaining_maturity = max(0, maturities[i] - horizon)
+            
+            if 'Call' in strategies[i]:
+                option_price = black_scholes_calc(sim_price, strikes[i], remaining_maturity, rates[i], vols[i], 'call')
+            else:
+                option_price = black_scholes_calc(sim_price, strikes[i], remaining_maturity, rates[i], vols[i], 'put')
+                
+            portfolio_value += quantities[i] * option_price
+            
+        simulated_portfolio_values[j] = portfolio_value
     
-    # Calculate profit metrics
+    # Calculate P&L
+    pnl = simulated_portfolio_values - current_portfolio_value
+    
+    # Sort P&L from worst to best
+    sorted_pnl = np.sort(pnl)
+    
+    # Calculate VaR
+    var_index = int(n_simulations * (1 - confidence))
+    var = -sorted_pnl[var_index]
+    
+    # Calculate Expected Shortfall (Conditional VaR)
+    es = -np.mean(sorted_pnl[:var_index])
+    
+    # Calculate additional risk metrics
+    volatility = np.std(pnl)
+    skewness = np.mean((pnl - np.mean(pnl))**3) / (volatility**3)
+    kurtosis = np.mean((pnl - np.mean(pnl))**4) / (volatility**4) - 3
+    
+    return {
+        'VaR': var,
+        'Expected_Shortfall': es,
+        'Volatility': volatility,
+        'Skewness': skewness,
+        'Kurtosis': kurtosis,
+        'Worst_Case': -sorted_pnl[0],
+        'Best_Case': sorted_pnl[-1],
+        'Confidence_Level': confidence,
+        'Horizon_Days': horizon * 252
+    }
+
+# Calculate Strategy Performance
+def calculate_strategy_performance(strategy_type, spot_price, strike_price, time_to_maturity,
+                                 risk_free_rate, volatility, call_value, put_value):
+    """
+    Calculate comprehensive performance metrics for option strategies
+    
+    Parameters:
+    -----------
+    strategy_type : str
+        Type of option strategy
+    spot_price, strike_price, time_to_maturity, risk_free_rate, volatility : float
+        Market parameters
+    call_value, put_value : float
+        Current option values
+    
+    Returns:
+    --------
+    dict: Performance metrics
+    """
+    # Calculate strategy Greeks
+    greeks = calculate_strategy_greeks(
+        strategy_type, spot_price, strike_price, time_to_maturity, risk_free_rate, volatility
+    )
+    
+    # Calculate advanced Greeks
+    advanced_greeks = calculate_advanced_greeks("Call", spot_price, strike_price, time_to_maturity, risk_free_rate, volatility)
+    
+    # Define spot price range for P&L calculation
+    spot_range = np.linspace(spot_price * 0.7, spot_price * 1.3, 100)
+    
+    # Calculate P&L
+    pnl = calculate_strategy_pnl(
+        strategy_type, spot_range, spot_price, strike_price,
+        time_to_maturity, risk_free_rate, volatility, call_value, put_value
+    )
+    
+    # Find break-even points
+    be_indices = np.where(np.diff(np.signbit(pnl)))[0]
+    break_even_points = [spot_range[i] for i in be_indices] if len(be_indices) > 0 else []
+    
+    # Profit probability estimation using lognormal distribution
+    if len(break_even_points) > 0:
+        # Sort break-even points
+        break_even_points.sort()
+        
+        # Calculate probability below lower BE and above upper BE
+        if len(break_even_points) == 1:
+            # One break-even point
+            be = break_even_points[0]
+            if pnl[0] > 0:  # Profitable below BE
+                profit_prob = norm.cdf(np.log(be/spot_price) / (volatility * np.sqrt(time_to_maturity)))
+            else:  # Profitable above BE
+                profit_prob = 1 - norm.cdf(np.log(be/spot_price) / (volatility * np.sqrt(time_to_maturity)))
+        else:
+            # Multiple break-even points, assume first and last define profitable region
+            lower_be = break_even_points[0]
+            upper_be = break_even_points[-1]
+            
+            if pnl[0] > 0:  # Profitable outside the range
+                profit_prob = norm.cdf(np.log(lower_be/spot_price) / (volatility * np.sqrt(time_to_maturity))) + \
+                             (1 - norm.cdf(np.log(upper_be/spot_price) / (volatility * np.sqrt(time_to_maturity))))
+            else:  # Profitable inside the range
+                profit_prob = norm.cdf(np.log(upper_be/spot_price) / (volatility * np.sqrt(time_to_maturity))) - \
+                             norm.cdf(np.log(lower_be/spot_price) / (volatility * np.sqrt(time_to_maturity)))
+    else:
+        # No break-even points, strategy is always profitable or always unprofitable
+        profit_prob = 1.0 if np.mean(pnl) > 0 else 0.0
+    
+    # Calculate maximum profit and loss
     max_profit = max(pnl)
     max_loss = abs(min(pnl))
     
-    # Calculate time and volatility impacts
-    greeks = calculate_strategy_greeks(strategy, current_price, strike_price,
-                                     time_to_maturity, risk_free_rate, volatility)
+    # Calculate risk-reward ratio
+    risk_reward = max_profit / max_loss if max_loss > 0 else float('inf')
     
-    profile = {
-        'Entry Price': current_price,
-        'Break-even Points': break_even_points,
-        'Max Profit Potential': max_profit,
-        'Max Loss Potential': max_loss,
-        'Profit Probability': calculate_profit_probability(strategy),
-        'Time Decay Impact': "Positive" if greeks['theta'] > 0 else "Negative",
-        'Volatility Impact': "Positive" if greeks['vega'] > 0 else "Negative",
-        'Margin Requirement': calculate_margin_requirement(strategy)
+    # Calculate time value decay
+    time_decay_rate = greeks['theta']
+    
+    # Calculate Sharpe-like ratio (expected return / volatility)
+    expected_pnl = np.mean(pnl)
+    pnl_volatility = np.std(pnl)
+    sharpe = expected_pnl / pnl_volatility if pnl_volatility > 0 else 0
+    
+    # Kelly criterion - optimal position size
+    if max_loss > 0:
+        win_prob = profit_prob
+        loss_prob = 1 - win_prob
+        avg_win = max_profit
+        avg_loss = max_loss
+        kelly = (win_prob * avg_win - loss_prob * avg_loss) / (avg_win * avg_loss) if avg_win * avg_loss > 0 else 0
+        kelly = max(0, min(1, kelly))  # Bound between 0 and 1
+    else:
+        kelly = 1  # No risk of loss
+    
+    # Return performance metrics
+    return {
+        'profitability': {
+            'max_profit': max_profit,
+            'max_loss': max_loss,
+            'expected_pnl': expected_pnl,
+            'break_even_points': break_even_points,
+            'profit_probability': profit_prob,
+            'risk_reward_ratio': risk_reward
+        },
+        'risk_metrics': {
+            'delta': greeks['delta'],
+            'gamma': greeks['gamma'],
+            'theta': greeks['theta'],
+            'vega': greeks['vega'],
+            'vanna': advanced_greeks['vanna'],
+            'volga': advanced_greeks['volga'],
+            'pnl_volatility': pnl_volatility,
+            'sharpe_ratio': sharpe,
+            'kelly_criterion': kelly
+        },
+        'time_decay': {
+            'daily_theta': greeks['theta'],
+            'weekly_decay': greeks['theta'] * 5,
+            'monthly_decay': greeks['theta'] * 21
+        },
+        'sensitivity': {
+            'price_move_10pct_up': np.interp(spot_price * 1.1, spot_range, pnl) - np.interp(spot_price, spot_range, pnl),
+            'price_move_10pct_down': np.interp(spot_price * 0.9, spot_range, pnl) - np.interp(spot_price, spot_range, pnl),
+            'vol_move_up': calculate_strategy_pnl(strategy_type, [spot_price], spot_price, strike_price,
+                                              time_to_maturity, risk_free_rate, volatility * 1.1, call_value, put_value)[0] -
+                          calculate_strategy_pnl(strategy_type, [spot_price], spot_price, strike_price,
+                                              time_to_maturity, risk_free_rate, volatility, call_value, put_value)[0]
+        }
+    }
+# Strategy Visualization Function
+def create_strategy_visualization(strategy, spot_range, current_price, strike_price, time_to_maturity, risk_free_rate, volatility, call_value, put_value):
+    """
+    Create visualization for option strategies with accurate payoffs and key levels
+    
+    Parameters:
+    -----------
+    strategy : str
+        Strategy type
+    spot_range : array
+        Range of spot prices for calculation
+    current_price, strike_price, time_to_maturity, risk_free_rate, volatility : float
+        Market parameters
+    call_value, put_value : float
+        Current option values
+    
+    Returns:
+    --------
+    fig: matplotlib figure object
+    """
+    # Calculate P&L
+    pnl = calculate_strategy_pnl(
+        strategy, spot_range, current_price, strike_price,
+        time_to_maturity, risk_free_rate, volatility, call_value, put_value
+    )
+    
+    # Define common strikes for reference
+    lower_strike = strike_price * 0.9
+    upper_strike = strike_price * 1.1
+    
+    # Create figure with improved styling
+    plt.style.use('dark_background')
+    fig_pnl = plt.figure(figsize=(12, 6))
+    
+    # Plot P&L profile with better visibility
+    plt.plot(spot_range, pnl, 'g-', linewidth=2.5, label='P&L Profile')
+    plt.axhline(y=0, color='r', linestyle='--', alpha=0.6, label='Break-even Line')
+    
+    # Add reference lines at current price and strike price(s)
+    plt.axvline(x=current_price, color='cyan', linestyle=':', alpha=0.5, label='Current Price')
+    plt.axvline(x=strike_price, color='magenta', linestyle=':', alpha=0.5, label='Strike Price')
+    
+    # For spread strategies, add reference lines for upper/lower strikes
+    if 'Spread' in strategy or 'Iron' in strategy:
+        if 'Call Spread' in strategy or 'Iron' in strategy:
+            plt.axvline(x=upper_strike, color='yellow', linestyle=':', alpha=0.3, label='Upper Strike')
+        if 'Put Spread' in strategy or 'Iron' in strategy:
+            plt.axvline(x=lower_strike, color='orange', linestyle=':', alpha=0.3, label='Lower Strike')
+    
+    # Find and mark break-even points
+    break_even_indices = np.where(np.diff(np.signbit(pnl)))[0]
+    break_even_points = [spot_range[i] for i in break_even_indices]
+    
+    # Mark key profit/loss points
+    max_profit_idx = np.argmax(pnl)
+    max_loss_idx = np.argmin(pnl)
+    
+    # Add annotations
+    plt.annotate(f'Max Profit: ${pnl[max_profit_idx]:.2f}',
+                xy=(spot_range[max_profit_idx], pnl[max_profit_idx]),
+                xytext=(10, 15), textcoords='offset points',
+                arrowprops=dict(arrowstyle='->', color='white', alpha=0.7))
+    
+    plt.annotate(f'Max Loss: ${pnl[max_loss_idx]:.2f}',
+                xy=(spot_range[max_loss_idx], pnl[max_loss_idx]),
+                xytext=(10, -15), textcoords='offset points',
+                arrowprops=dict(arrowstyle='->', color='white', alpha=0.7))
+    
+    # Mark break-even points
+    for point in break_even_points:
+        plt.axvline(x=point, color='white', linestyle='--', alpha=0.5)
+        plt.text(point, plt.ylim()[0] * 0.9, f'BE: {point:.2f}', rotation=90,
+               verticalalignment='bottom', color='white', fontweight='bold')
+    
+    # Improve chart aesthetics
+    plt.grid(True, alpha=0.3)
+    plt.xlabel('Stock Price ($)', fontsize=12)
+    plt.ylabel('Profit/Loss ($)', fontsize=12)
+    plt.title(f'{strategy} P&L Profile', fontsize=14, fontweight='bold')
+    plt.legend(loc='best')
+    
+    # Add strategy description based on mathematical formulas
+    if strategy == "Covered Call Writing":
+        description = "Long stock + Short call\nMax Profit: (K - S₀) + C when S_T > K\nMax Loss: S₀ - C (if S_T → 0)"
+    elif strategy == "Long Call":
+        description = "Max Profit: Unlimited as S_T → ∞\nMax Loss: Premium paid (C)"
+    elif strategy == "Bull Call Spread":
+        description = "Long lower strike call + Short higher strike call\nMax Profit: (K₂ - K₁) - Net Debit\nMax Loss: Net debit paid"
+    elif strategy == "Bear Call Spread":
+        description = "Short lower strike call + Long higher strike call\nMax Profit: Net credit received\nMax Loss: (K₂ - K₁) - Net Credit"
+    elif strategy == "Long Put":
+        description = "Max Profit: K - P (if S_T → 0)\nMax Loss: Premium paid (P)"
+    elif strategy == "Protective Put":
+        description = "Long stock + Long put\nMax Profit: Unlimited as S_T → ∞\nMax Loss: S₀ + P - K"
+    elif strategy == "Long Straddle":
+        description = "Long call + Long put (same strike)\nMax Profit: Unlimited\nMax Loss: C + P"
+    elif strategy == "Short Straddle":
+        description = "Short call + Short put (same strike)\nMax Profit: C + P\nMax Loss: Unlimited"
+    elif strategy == "Iron Butterfly":
+        description = "Short ATM put + Short ATM call + Long OTM put + Long OTM call\nMax Profit: Net credit\nMax Loss: Δ - Net Credit"
+    elif strategy == "Iron Condor":
+        description = "Bull put spread + Bear call spread\nMax Profit: Net credit\nMax Loss: Δ - Net Credit"
+    else:
+        description = ""
+    
+    # Add description text box
+    plt.figtext(0.02, 0.02, description, fontsize=10, bbox=dict(facecolor='black', alpha=0.7, edgecolor='white'))
+    
+    return fig_pnl
+
+# Local Volatility Surface Calculation
+def local_volatility_surface(strikes, maturities, implied_vols, spot, rates):
+    """
+    Generate local volatility surface using Dupire's formula
+    
+    Parameters:
+    -----------
+    strikes : array-like
+        Array of strike prices
+    maturities : array-like
+        Array of maturities (in years)
+    implied_vols : 2D array-like
+        Matrix of implied volatilities for each strike/maturity pair
+    spot : float
+        Current spot price
+    rates : array-like
+        Risk-free rates for each maturity
+    
+    Returns:
+    --------
+    local_vol_surface : 2D array
+        Matrix of local volatilities
+    """
+    # Create 2D grid
+    K_grid, T_grid = np.meshgrid(strikes, maturities)
+    local_vol = np.zeros_like(K_grid)
+    
+    # Ensure implied_vols is a numpy array
+    implied_vols = np.array(implied_vols)
+    
+    # Calculate numerical derivatives for Dupire formula
+    for i, T in enumerate(maturities):
+        for j, K in enumerate(strikes):
+            if i == 0 or j == 0 or i == len(maturities)-1 or j == len(strikes)-1:
+                # Skip boundaries
+                local_vol[i, j] = implied_vols[i, j]
+                continue
+                
+            # Time derivative (dC/dT)
+            if i < len(maturities) - 1:
+                dT = maturities[i+1] - maturities[i-1]
+                dC_dT = (implied_vols[i+1, j] - implied_vols[i-1, j]) / dT
+            else:
+                dC_dT = 0
+            
+            # First strike derivative (dC/dK)
+            dK = strikes[j+1] - strikes[j-1]
+            dC_dK = (implied_vols[i, j+1] - implied_vols[i, j-1]) / dK
+            
+            # Second strike derivative (d²C/dK²)
+            d2C_dK2 = (implied_vols[i, j+1] - 2*implied_vols[i, j] + implied_vols[i, j-1]) / ((dK/2)**2)
+            
+            # Dupire's formula for local volatility
+            r = rates[i] if isinstance(rates, (list, np.ndarray)) else rates
+            iv = implied_vols[i, j]
+            
+            numerator = dC_dT + r*K*dC_dK
+            denominator = 0.5 * K**2 * d2C_dK2
+            
+            if denominator > 0:
+                local_vol[i, j] = np.sqrt(numerator / denominator)
+            else:
+                local_vol[i, j] = iv  # Fallback to implied vol if denominator is non-positive
+    
+    return local_vol
+
+# Risk Scenario Analysis
+def risk_scenario_analysis(strategy, current_price, strike_price, time_to_maturity,
+                         risk_free_rate, current_vol, pnl_function):
+    """
+    Perform stress testing and scenario analysis for an option strategy
+    
+    Parameters:
+    -----------
+    strategy : str
+        Strategy type
+    current_price, strike_price, time_to_maturity, risk_free_rate, current_vol : float
+        Current market parameters
+    pnl_function : function
+        Function to calculate strategy P&L
+    
+    Returns:
+    --------
+    dict: Scenario analysis results
+    """
+    # Define scenarios
+    price_scenarios = np.array([0.85, 0.90, 0.95, 1.0, 1.05, 1.10, 1.15]) * current_price
+    vol_scenarios = np.array([0.7, 0.85, 1.0, 1.15, 1.3]) * current_vol
+    time_scenarios = np.array([1/252, 5/252, 10/252, 21/252]) # 1, 5, 10, 21 days
+    
+    # Initialize results container
+    results = {
+        'price_impact': {},
+        'vol_impact': {},
+        'time_decay': {},
+        'extreme_scenarios': {}
     }
     
-    return profile
+    # Calculate P&L across price scenarios (keeping other factors constant)
+    price_pnl = []
+    for price in price_scenarios:
+        spot_range = np.array([price])
+        pnl = pnl_function(strategy, spot_range, current_price, strike_price,
+                            time_to_maturity, risk_free_rate, current_vol)[0]
+        price_pnl.append(pnl)
+    
+    results['price_impact'] = {
+        'scenarios': price_scenarios,
+        'pnl': price_pnl,
+        'max_loss': min(price_pnl),
+        'max_gain': max(price_pnl)
+    }
+    
+    # Calculate P&L across volatility scenarios
+    vol_pnl = []
+    for vol in vol_scenarios:
+        spot_range = np.array([current_price])
+        pnl = pnl_function(strategy, spot_range, current_price, strike_price,
+                            time_to_maturity, risk_free_rate, vol)[0]
+        vol_pnl.append(pnl)
+    
+    results['vol_impact'] = {
+        'scenarios': vol_scenarios,
+        'pnl': vol_pnl,
+        'max_loss': min(vol_pnl),
+        'max_gain': max(vol_pnl)
+    }
+    
+    # Calculate time decay impact
+    time_pnl = []
+    for time_left in time_scenarios:
+        spot_range = np.array([current_price])
+        pnl = pnl_function(strategy, spot_range, current_price, strike_price,
+                            time_left, risk_free_rate, current_vol)[0]
+        time_pnl.append(pnl)
+    
+    results['time_decay'] = {
+        'scenarios': time_scenarios,
+        'pnl': time_pnl,
+        'effect': time_pnl[0] - time_pnl[-1]  # P&L difference between 1 day and 21 days
+    }
+    
+    # Extreme scenarios
+    extreme_scenarios = {
+        'market_crash': pnl_function(strategy, np.array([current_price * 0.8]), current_price,
+                                    strike_price, time_to_maturity, risk_free_rate, current_vol * 1.5)[0],
+        'market_rally': pnl_function(strategy, np.array([current_price * 1.2]), current_price,
+                                    strike_price, time_to_maturity, risk_free_rate, current_vol * 1.3)[0],
+        'vol_explosion': pnl_function(strategy, np.array([current_price]), current_price,
+                                     strike_price, time_to_maturity, risk_free_rate, current_vol * 2.0)[0],
+        'vol_collapse': pnl_function(strategy, np.array([current_price]), current_price,
+                                    strike_price, time_to_maturity, risk_free_rate, current_vol * 0.5)[0]
+    }
+    
+    results['extreme_scenarios'] = extreme_scenarios
+    
+    return results
 
-# UI Components and Visualization Functions
-def create_pnl_colormap():
-    """Create custom colormap for P&L visualization"""
-    colors = ['darkred', 'red', 'white', 'lightgreen', 'darkgreen']
-    nodes = [0.0, 0.25, 0.5, 0.75, 1.0]
-    return LinearSegmentedColormap.from_list('pnl_colormap', list(zip(nodes, colors)))
-
+# Display functions for the UI
 def display_option_prices(price_info):
-    """Display option prices in colored boxes"""
+    """Display option prices in a clean format"""
     col1, col2 = st.columns(2)
     with col1:
         st.markdown(f"""
@@ -689,941 +1145,37 @@ def display_option_prices(price_info):
         """, unsafe_allow_html=True)
 
 def display_greeks(calculated_greeks):
-    """Display Greeks in a grid layout"""
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("""
-            <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
-                <h4 style="color: white; margin-bottom: 1rem;">Position Greeks</h4>
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-                    <div class="greek-card">
-                        <div class="greek-label">Delta</div>
-                        <div class="greek-value">{}</div>
-                    </div>
-                    <div class="greek-card">
-                        <div class="greek-label">Gamma</div>
-                        <div class="greek-value">{}</div>
-                    </div>
+    """Display Greeks in a minimal grid layout"""
+    st.markdown(f"""
+        <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
+            <h4 style="color: white; margin-bottom: 1rem;">Position Greeks</h4>
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 10px;">
+                <div class="greek-card">
+                    <div class="greek-label">Delta</div>
+                    <div class="greek-value">{round(calculated_greeks['delta'], 3)}</div>
+                </div>
+                <div class="greek-card">
+                    <div class="greek-label">Gamma</div>
+                    <div class="greek-value">{round(calculated_greeks['gamma'], 3)}</div>
+                </div>
+                <div class="greek-card">
+                    <div class="greek-label">Theta</div>
+                    <div class="greek-value">{round(calculated_greeks['theta'], 3)}</div>
+                </div>
+                <div class="greek-card">
+                    <div class="greek-label">Vega</div>
+                    <div class="greek-value">{round(calculated_greeks['vega'], 3)}</div>
                 </div>
             </div>
-        """.format(
-            round(calculated_greeks['delta'], 3),
-            round(calculated_greeks['gamma'], 3)
-        ), unsafe_allow_html=True)
+        </div>
+    """, unsafe_allow_html=True)
 
-# Strategy Dictionaries
-strategy_advantages = {
-    # Call Option Strategies Advantages
-    "Covered Call Writing": [
-        "Generates regular income from premium collection",
-        "Provides downside protection equal to premium received",
-        "Lower risk than outright stock ownership",
-        "Can be repeated monthly for consistent income",
-        "Benefits from time decay (theta positive)"
-    ],
-    
-    "Long Call": [
-        "Limited risk to premium paid",
-        "Unlimited profit potential",
-        "High leverage compared to stock ownership",
-        "No margin requirements",
-        "Lower capital requirement than stock purchase"
-    ],
-    
-    "Protected Short Sale": [
-        "Limited upside risk through call protection",
-        "Profits from stock price decline",
-        "Less margin intensive than pure short sale",
-        "Flexible exit strategies available",
-        "Known maximum loss"
-    ],
-    
-    "Reverse Hedge": [
-        "Profits from large moves in either direction",
-        "Known maximum loss (premium paid)",
-        "Multiple profit opportunities",
-        "Good strategy for earnings announcements",
-        "Benefits from volatility increase"
-    ],
-    
-    "Naked Call Writing": [
-        "Immediate premium income",
-        "Benefits from time decay",
-        "High probability of profit in range-bound markets",
-        "No capital outlay for stock purchase",
-        "Profits from decreased volatility"
-    ],
-    
-    "Ratio Call Writing": [
-        "Enhanced premium income potential",
-        "Lower risk than naked calls",
-        "Benefits from time decay",
-        "Can profit in multiple scenarios",
-        "Good for range-bound markets"
-    ],
-    
-    "Bull Call Spread": [
-        "Defined risk and reward",
-        "Lower cost than outright call purchase",
-        "Benefits from upward movement",
-        "Less affected by volatility changes",
-        "Lower break-even point than long call"
-    ],
-    
-    "Bear Call Spread": [
-        "Credit received upfront",
-        "Defined risk and reward",
-        "Benefits from downward movement",
-        "High probability of profit",
-        "Less sensitive to volatility changes"
-    ],
-    
-    "Calendar Call Spread": [
-        "Benefits from time decay",
-        "Lower cost than outright options",
-        "Multiple profit opportunities",
-        "Benefits from volatility increase",
-        "Can be adjusted to market conditions"
-    ],
-    
-    "Butterfly Call Spread": [
-        "Defined risk and reward",
-        "Low cost relative to potential return",
-        "Benefits from low volatility",
-        "Multiple profit scenarios",
-        "Good for range-bound markets"
-    ],
-    
-    "Ratio Call Spread": [
-        "Lower initial cost",
-        "Multiple profit zones",
-        "Benefits from volatility decline",
-        "Good for directional views",
-        "Flexible position management"
-    ],
-    
-    "Ratio Calendar Call Spread": [
-        "Benefits from time decay",
-        "Multiple profit opportunities",
-        "Lower cost than regular calendar spread",
-        "Can profit from volatility changes",
-        "Adjustable to market conditions"
-    ],
-    
-    "Delta-Neutral Calendar Spread": [
-        "Market neutral strategy",
-        "Benefits from volatility increase",
-        "Profits from time decay",
-        "Multiple adjustment opportunities",
-        "Good for high volatility environments"
-    ],
-    
-    "Reverse Calendar Call Spread": [
-        "Benefits from quick market moves",
-        "Lower cost than outright options",
-        "Good for low volatility environments",
-        "Multiple profit opportunities",
-        "Flexible exit strategies"
-    ],
-    
-    "Reverse Ratio Call Spread": [
-        "Limited risk with unlimited upside",
-        "Benefits from sharp moves",
-        "Good for breakout scenarios",
-        "Multiple profit opportunities",
-        "Positive gamma exposure"
-    ],
-    
-    "Diagonal Bull Call Spread": [
-        "Lower cost than calendar spread",
-        "Benefits from upward movement",
-        "Multiple profit opportunities",
-        "Time decay advantages",
-        "Flexible position management"
-    ],
-    
-    # Put Option Strategies Advantages
-    "Long Put": [
-        "Limited risk to premium paid",
-        "Significant profit potential in down markets",
-        "High leverage compared to short selling",
-        "No margin requirements",
-        "Good hedge against stock positions"
-    ],
-    
-    "Protective Put": [
-        "Limits downside risk",
-        "Maintains upside potential",
-        "Known maximum loss",
-        "Portfolio protection",
-        "Good for volatile markets"
-    ],
-    
-    "Put with Covered Call": [
-        "Complete downside protection",
-        "Enhanced income potential",
-        "Defined risk and reward",
-        "Multiple income streams",
-        "Flexible position management"
-    ],
-    
-    "No-Cost Collar": [
-        "Zero or low-cost protection",
-        "Defined risk and reward",
-        "No or minimal cash outlay",
-        "Good for portfolio protection",
-        "Adjustable protection levels"
-    ],
-    
-    "Naked Put Writing": [
-        "Immediate premium income",
-        "High probability of profit",
-        "Benefits from time decay",
-        "Good for acquiring stock",
-        "Benefits from decreased volatility"
-    ],
-    
-    "Covered Put Sale": [
-        "Enhanced premium income",
-        "Benefits from time decay",
-        "Good for range-bound markets",
-        "Multiple profit sources",
-        "High probability of profit"
-    ],
-    
-    "Ratio Put Writing": [
-        "Enhanced premium income",
-        "Benefits from time decay",
-        "Multiple profit zones",
-        "Good for range-bound markets",
-        "Flexible position management"
-    ],
-    
-    "Bear Put Spread": [
-        "Defined risk and reward",
-        "Lower cost than outright put",
-        "Benefits from downward movement",
-        "Less affected by volatility",
-        "Good for bearish views"
-    ],
-    
-    "Bull Put Spread": [
-        "Credit received upfront",
-        "High probability of profit",
-        "Benefits from upward movement",
-        "Defined risk and reward",
-        "Good for income generation"
-    ],
-    
-    "Calendar Put Spread": [
-        "Benefits from time decay",
-        "Multiple profit opportunities",
-        "Lower cost than outright puts",
-        "Benefits from volatility increase",
-        "Flexible position management"
-    ],
-    
-    "Butterfly Put Spread": [
-        "Defined risk and reward",
-        "Low cost relative to return",
-        "Benefits from low volatility",
-        "Multiple profit scenarios",
-        "Good for range-bound markets"
-    ],
-    
-    # Combined Strategies Advantages
-    "Long Straddle": [
-        "Profits from large moves either direction",
-        "Unlimited profit potential",
-        "Perfect for event-driven trades",
-        "Benefits from volatility increase",
-        "Good earnings play strategy"
-    ],
-    
-    "Short Straddle": [
-        "Maximum premium collection",
-        "Benefits from time decay",
-        "Profits from range-bound markets",
-        "Benefits from volatility decrease",
-        "High probability of partial profit"
-    ],
-    
-    "Long Strangle": [
-        "Lower cost than straddle",
-        "Unlimited profit potential",
-        "Profits from large moves",
-        "Benefits from volatility increase",
-        "Good for uncertain directional views"
-    ],
-    
-    "Short Strangle": [
-        "Higher probability of profit than straddle",
-        "Maximum premium collection",
-        "Benefits from time decay",
-        "Profits from range-bound markets",
-        "Benefits from volatility decrease"
-    ],
-    
-    "Synthetic Long Stock": [
-        "Lower capital requirement than stock",
-        "Similar risk/reward to stock",
-        "No uptick rule restrictions",
-        "Good for hard-to-borrow stocks",
-        "Leverage benefits"
-    ],
-    
-    "Synthetic Short Stock": [
-        "Lower margin than short stock",
-        "No hard-to-borrow fees",
-        "Similar risk/reward to short stock",
-        "No uptick rule restrictions",
-        "Good for restricted stocks"
-    ],
-    
-    "Iron Butterfly": [
-        "Defined risk and reward",
-        "High probability of profit",
-        "Benefits from time decay",
-        "Good for low volatility",
-        "Multiple adjustment opportunities"
-    ],
-    
-    "Iron Condor": [
-        "Defined risk and reward",
-        "Higher probability of profit",
-        "Benefits from time decay",
-        "Good for range-bound markets",
-        "Multiple adjustment opportunities"
-    ]
-}
-
-strategy_disadvantages = {
-    # Call Option Strategies Disadvantages
-    "Covered Call Writing": [
-        "Limits upside potential beyond strike price",
-        "Requires significant capital for stock position",
-        "Stock can still decline significantly",
-        "Opportunity cost in strong bull markets",
-        "Assignment risk near ex-dividend dates"
-    ],
-    
-    "Long Call": [
-        "Premium decay over time (theta decay)",
-        "Requires correct timing and direction",
-        "Loses value with volatility decline",
-        "Can lose 100% of investment",
-        "High leverage can magnify losses"
-    ],
-    
-    "Protected Short Sale": [
-        "Higher cost than direct put purchase",
-        "Complex execution and management",
-        "Multiple commissions and fees",
-        "Hard-to-borrow stock issues",
-        "Requires margin account"
-    ],
-    
-    "Reverse Hedge": [
-        "High cost of double premium",
-        "Requires significant price movement",
-        "Time decay works against position",
-        "Loses value with volatility decline",
-        "Complex position management"
-    ],
-    
-    "Naked Call Writing": [
-        "Unlimited risk potential",
-        "Requires significant margin",
-        "Risk of early assignment",
-        "Dangerous in strong bull markets",
-        "Subject to margin calls"
-    ],
-    
-    "Ratio Call Writing": [
-        "Complex risk profile",
-        "Unlimited risk beyond breakeven",
-        "Requires careful monitoring",
-        "Multiple assignment risks",
-        "Higher margin requirements"
-    ],
-    
-    "Bull Call Spread": [
-        "Limited profit potential",
-        "Requires stock to rise to be profitable",
-        "Time decay affects long option",
-        "Volatility decline hurts position",
-        "Early exercise can complicate management"
-    ],
-    
-    "Bear Call Spread": [
-        "Limited profit potential",
-        "Early assignment risk",
-        "Complex margin requirements",
-        "Multiple commission costs",
-        "Requires precise timing"
-    ],
-    
-    "Calendar Call Spread": [
-        "Complex position management",
-        "Risk of rapid stock movement",
-        "Volatility changes affect legs differently",
-        "Requires accurate timing",
-        "Multiple commission costs"
-    ],
-    
-    "Butterfly Call Spread": [
-        "Limited profit potential",
-        "Requires precise stock movement",
-        "Complex position management",
-        "Multiple commission costs",
-        "Illiquid at certain strikes"
-    ],
-    
-    "Ratio Call Spread": [
-        "Unlimited risk potential",
-        "Complex delta management",
-        "Multiple commission costs",
-        "Hard to adjust position",
-        "Early exercise risk"
-    ],
-    
-    "Ratio Calendar Call Spread": [
-        "Complex position management",
-        "Sensitive to volatility changes",
-        "Multiple expiration management",
-        "Higher commission costs",
-        "Requires precise timing"
-    ],
-    
-    "Delta-Neutral Calendar Spread": [
-        "Requires constant monitoring",
-        "Complex adjustments needed",
-        "High commission costs from adjustments",
-        "Sensitive to volatility skew",
-        "Time decay risk if stock moves significantly"
-    ],
-    
-    "Reverse Calendar Call Spread": [
-        "Complex risk profile",
-        "High cost of near-term options",
-        "Sensitive to volatility changes",
-        "Requires precise timing",
-        "Limited profit potential"
-    ],
-    
-    "Reverse Ratio Call Spread": [
-        "High initial cost",
-        "Complex position management",
-        "Multiple commission costs",
-        "Limited profit in range-bound markets",
-        "Sensitive to volatility changes"
-    ],
-    
-    "Diagonal Bull Call Spread": [
-        "Complex position management",
-        "Different expiration dates",
-        "Volatility risk across months",
-        "Higher commission costs",
-        "Requires precise timing"
-    ],
-    
-    # Put Option Strategies Disadvantages
-    "Long Put": [
-        "Premium decay over time",
-        "Requires correct timing",
-        "Loses value with volatility decline",
-        "Can lose 100% of investment",
-        "High cost relative to potential stock decline"
-    ],
-    
-    "Protective Put": [
-        "Expensive insurance cost",
-        "Reduces overall returns",
-        "Regular premium outlay needed",
-        "Time decay works against position",
-        "Less effective in low volatility"
-    ],
-    
-    "Put with Covered Call": [
-        "Complex position management",
-        "High total premium cost",
-        "Multiple commission costs",
-        "Limited upside potential",
-        "Time decay on both options"
-    ],
-    
-    "No-Cost Collar": [
-        "Limits upside potential",
-        "Complex position management",
-        "Multiple commission costs",
-        "May require adjustments",
-        "Opportunity cost in strong markets"
-    ],
-    
-    "Naked Put Writing": [
-        "Substantial downside risk",
-        "Requires significant margin",
-        "Risk of early assignment",
-        "Subject to margin calls",
-        "Losses accelerate in down markets"
-    ],
-    
-    "Covered Put Sale": [
-        "Unlimited risk potential",
-        "Complex margin requirements",
-        "Multiple commission costs",
-        "Hard-to-borrow stock issues",
-        "Requires margin account"
-    ],
-    
-    "Ratio Put Writing": [
-        "Complex risk profile",
-        "Unlimited risk in down markets",
-        "Multiple assignment risks",
-        "Higher margin requirements",
-        "Difficult to adjust"
-    ],
-    
-    "Bear Put Spread": [
-        "Limited profit potential",
-        "Time decay affects long option",
-        "Multiple commission costs",
-        "Requires precise timing",
-        "Early exercise can complicate management"
-    ],
-    
-    "Bull Put Spread": [
-        "Limited profit potential",
-        "Risk of early assignment",
-        "Complex margin requirements",
-        "Multiple commission costs",
-        "Maximum loss at lower strike"
-    ],
-    
-    "Calendar Put Spread": [
-        "Complex position management",
-        "Risk of rapid stock movement",
-        "Volatility changes affect legs differently",
-        "Multiple commission costs",
-        "Requires precise timing"
-    ],
-    
-    "Butterfly Put Spread": [
-        "Limited profit potential",
-        "Requires precise stock movement",
-        "Complex position management",
-        "Multiple commission costs",
-        "Illiquid at certain strikes"
-    ],
-    
-    # Combined Strategies Disadvantages
-    "Long Straddle": [
-        "High premium cost",
-        "Requires large price movement",
-        "Time decay hurts both options",
-        "Loses value with volatility decline",
-        "Multiple commission costs"
-    ],
-    
-    "Short Straddle": [
-        "Unlimited risk potential",
-        "High margin requirements",
-        "Risk of early assignment",
-        "Complex position management",
-        "Dangerous in volatile markets"
-    ],
-    
-    "Long Strangle": [
-        "High premium cost",
-        "Requires larger price movement",
-        "Time decay hurts both options",
-        "Multiple commission costs",
-        "Loses value with volatility decline"
-    ],
-    
-    "Short Strangle": [
-        "Unlimited risk potential",
-        "High margin requirements",
-        "Multiple assignment risks",
-        "Complex position management",
-        "Dangerous in volatile markets"
-    ],
-    
-    "Synthetic Long Stock": [
-        "Complex position management",
-        "Early assignment risk",
-        "Multiple commission costs",
-        "Requires margin account",
-        "No dividend benefits"
-    ],
-    
-    "Synthetic Short Stock": [
-        "Unlimited risk potential",
-        "Complex position management",
-        "Multiple commission costs",
-        "Early assignment risk",
-        "Requires margin account"
-    ],
-    
-    "Iron Butterfly": [
-        "Limited profit potential",
-        "Complex position management",
-        "Multiple commission costs",
-        "Requires precise timing",
-        "All four options must be managed"
-    ],
-    
-    "Iron Condor": [
-        "Limited profit potential",
-        "Complex position management",
-        "Multiple commission costs",
-        "All four options must be managed",
-        "Early assignment risk on short options"
-    ]
-}
-
-strategy_market_conditions = {
-    # Call Option Strategies Market Conditions
-    "Covered Call Writing": """
-        Best Market Outlook: Neutral to slightly bullish
-        Volatility Requirement: Moderate to high implied volatility
-        Time Horizon: 30-45 days typically
-        Key Conditions:
-        - Stable to slowly rising market
-        - Higher than normal implied volatility
-        - No major events expected
-        - Stock trading above support levels
-        Risk Factors to Watch:
-        - Earnings announcements
-        - Ex-dividend dates
-        - Major market events
-    """,
-    
-    "Long Call": """
-        Best Market Outlook: Strongly bullish
-        Volatility Requirement: Low to moderate implied volatility
-        Time Horizon: Minimum 60 days recommended
-        Key Conditions:
-        - Strong upward momentum
-        - Clear technical breakout
-        - Positive market sentiment
-        - Low put/call ratio
-        Risk Factors to Watch:
-        - Overall market direction
-        - Sector momentum
-        - Time decay acceleration
-    """,
-    
-    "Protected Short Sale": """
-        Best Market Outlook: Bearish with defined risk
-        Volatility Requirement: Low to moderate implied volatility
-        Time Horizon: 30-90 days
-        Key Conditions:
-        - Clear technical breakdown
-        - Weakening fundamentals
-        - Negative sector momentum
-        - High call protection available
-        Risk Factors to Watch:
-        - Short squeeze potential
-        - Hard to borrow rates
-        - Dividend announcements
-    """,
-    
-    "Reverse Hedge": """
-        Best Market Outlook: Uncertain direction with large move expected
-        Volatility Requirement: Low implied volatility
-        Time Horizon: 30-60 days
-        Key Conditions:
-        - Upcoming binary events
-        - Historical price movement patterns
-        - Low current volatility vs historical
-        - Technical consolidation pattern
-        Risk Factors to Watch:
-        - Volatility crush after events
-        - Time decay on both options
-        - Size of expected move
-    """,
-    
-    "Naked Call Writing": """
-        Best Market Outlook: Neutral to slightly bearish
-        Volatility Requirement: High implied volatility
-        Time Horizon: 30-45 days
-        Key Conditions:
-        - Clear technical resistance levels
-        - Overbought conditions
-        - High implied volatility vs historical
-        - Range-bound market
-        Risk Factors to Watch:
-        - Gap risk overnight
-        - Short interest levels
-        - Merger/acquisition potential
-    """,
-    
-    "Ratio Call Writing": """
-        Best Market Outlook: Neutral with upside potential
-        Volatility Requirement: High implied volatility
-        Time Horizon: 30-45 days
-        Key Conditions:
-        - Clear technical levels
-        - High premium available
-        - Stable market conditions
-        - Known support/resistance
-        Risk Factors to Watch:
-        - Sharp upward moves
-        - Volatility changes
-        - Time decay differential
-    """,
-    
-    "Bull Call Spread": """
-        Best Market Outlook: Moderately bullish
-        Volatility Requirement: Moderate to high implied volatility
-        Time Horizon: 45-60 days
-        Key Conditions:
-        - Upward trend in place
-        - Clear technical support
-        - Reasonable volatility levels
-        - Defined upside target
-        Risk Factors to Watch:
-        - Time decay impact
-        - Strike price selection
-        - Overall market trend
-    """,
-    
-    "Bear Call Spread": """
-        Best Market Outlook: Moderately bearish
-        Volatility Requirement: High implied volatility
-        Time Horizon: 30-45 days
-        Key Conditions:
-        - Downward trend in place
-        - Clear technical resistance
-        - Overbought conditions
-        - High premium available
-        Risk Factors to Watch:
-        - Gap risk
-        - Early assignment
-        - Support levels
-    """,
-    
-    "Calendar Call Spread": """
-        Best Market Outlook: Neutral near term, bullish longer term
-        Volatility Requirement: Low near-term volatility
-        Time Horizon: 30-90 days
-        Key Conditions:
-        - Stable near-term price action
-        - Volatility term structure
-        - Clear technical levels
-        - Time decay opportunity
-        Risk Factors to Watch:
-        - Sharp price movements
-        - Volatility skew changes
-        - Time decay differential
-    """,
-    
-    "Butterfly Call Spread": """
-        Best Market Outlook: Highly neutral
-        Volatility Requirement: Low implied volatility
-        Time Horizon: 30-45 days
-        Key Conditions:
-        - Range-bound market
-        - Clear technical levels
-        - Low volatility environment
-        - Known price targets
-        Risk Factors to Watch:
-        - Sharp directional moves
-        - Volatility increases
-        - Time decay profile
-    """,
-    
-    "Ratio Call Spread": """
-        Best Market Outlook: Moderately bullish with ceiling
-        Volatility Requirement: Moderate to high implied volatility
-        Time Horizon: 30-45 days
-        Key Conditions:
-        - Clear technical levels
-        - Stable volatility environment
-        - Known resistance levels
-        - Premium opportunity
-        Risk Factors to Watch:
-        - Sharp upward moves
-        - Volatility changes
-        - Delta management
-    """,
-    
-    "Ratio Calendar Call Spread": """
-        Best Market Outlook: Neutral near term, directional longer term
-        Volatility Requirement: Low near-term volatility
-        Time Horizon: Mixed (30-90 days)
-        Key Conditions:
-        - Volatility term structure
-        - Clear technical levels
-        - Time decay opportunity
-        - Defined price targets
-        Risk Factors to Watch:
-        - Sharp price movements
-        - Volatility skew changes
-        - Calendar risk
-    """,
-    
-    "Delta-Neutral Calendar Spread": """
-        Best Market Outlook: Neutral with volatility increase expected
-        Volatility Requirement: Low near-term volatility
-        Time Horizon: Mixed (30-90 days)
-        Key Conditions:
-        - Volatility term structure
-        - Range-bound market
-        - Clear technical levels
-        - Low historical volatility
-        Risk Factors to Watch:
-        - Sharp directional moves
-        - Volatility term structure changes
-        - Delta balancing needs
-    """,
-    
-    # Put Option Strategies Market Conditions
-    "Long Put": """
-        Best Market Outlook: Bearish
-        Volatility Requirement: Low to moderate implied volatility
-        Time Horizon: Minimum 60 days recommended
-        Key Conditions:
-        - Clear downward trend
-        - Technical breakdown
-        - Negative sentiment
-        - Catalyst expected
-        Risk Factors to Watch:
-        - Time decay
-        - Volatility crush
-        - Support levels
-    """,
-    
-    "Protective Put": """
-        Best Market Outlook: Bullish with need for protection
-        Volatility Requirement: Low to moderate implied volatility
-        Time Horizon: 3-6 months typically
-        Key Conditions:
-        - Portfolio protection needed
-        - Event risk present
-        - Reasonable put prices
-        - Clear risk levels
-        Risk Factors to Watch:
-        - Cost of protection
-        - Strike selection
-        - Roll timing
-    """,
-    
-    "Naked Put Writing": """
-        Best Market Outlook: Neutral to slightly bullish
-        Volatility Requirement: High implied volatility
-        Time Horizon: 30-45 days
-        Key Conditions:
-        - Clear support levels
-        - High premium available
-        - Range-bound market
-        - Stable conditions
-        Risk Factors to Watch:
-        - Gap risk
-        - Support levels
-        - Assignment risk
-    """,
-    
-    # Combined Strategies Market Conditions
-    "Long Straddle": """
-        Best Market Outlook: Large move expected either direction
-        Volatility Requirement: Low implied volatility
-        Time Horizon: 30-60 days
-        Key Conditions:
-        - Major event pending
-        - Technical breakout expected
-        - Low current volatility
-        - Historical movement patterns
-        Risk Factors to Watch:
-        - Time decay
-        - Volatility crush
-        - Size of move needed
-    """,
-    
-    "Short Straddle": """
-        Best Market Outlook: Highly neutral
-        Volatility Requirement: High implied volatility
-        Time Horizon: 30-45 days
-        Key Conditions:
-        - Range-bound market
-        - High premium available
-        - Clear technical levels
-        - No major events pending
-        Risk Factors to Watch:
-        - Gap risk
-        - Assignment risk
-        - Support/resistance levels
-    """,
-    
-    "Iron Butterfly": """
-        Best Market Outlook: Highly neutral
-        Volatility Requirement: High implied volatility
-        Time Horizon: 30-45 days
-        Key Conditions:
-        - Range-bound market
-        - Clear technical levels
-        - High premium available
-        - Stable conditions
-        Risk Factors to Watch:
-        - Sharp moves
-        - Volatility changes
-        - Time decay profile
-    """,
-    
-    "Iron Condor": """
-        Best Market Outlook: Neutral with wider range
-        Volatility Requirement: High implied volatility
-        Time Horizon: 30-45 days
-        Key Conditions:
-        - Range-bound market
-        - Clear technical levels
-        - High premium available
-        - Known support/resistance
-        Risk Factors to Watch:
-        - Sharp directional moves
-        - Volatility changes
-        - Wing risk management
-    """,
-    
-    "Synthetic Long Stock": """
-        Best Market Outlook: Bullish
-        Volatility Requirement: Low to moderate implied volatility
-        Time Horizon: 60+ days
-        Key Conditions:
-        - Strong upward trend
-        - Clear technical levels
-        - Reasonable option prices
-        - Hard to borrow stock
-        Risk Factors to Watch:
-        - Assignment risk
-        - Synthetic dividend risk
-        - Margin requirements
-    """,
-    
-    "Synthetic Short Stock": """
-        Best Market Outlook: Bearish
-        Volatility Requirement: Low to moderate implied volatility
-        Time Horizon: 60+ days
-        Key Conditions:
-        - Strong downward trend
-        - Clear technical levels
-        - Reasonable option prices
-        - Hard to borrow stock
-        Risk Factors to Watch:
-        - Assignment risk
-        - Synthetic dividend risk
-        - Margin requirements
-    """
-}
-
-# Main UI Layout Components
+# Setup sidebar inputs
 def setup_sidebar():
-    """Setup sidebar inputs and controls"""
+    """Setup sidebar inputs and controls with quantitative research options"""
     st.sidebar.markdown("## Model Selection")
     model_type = st.sidebar.selectbox(
-        "",
+        "Model Type",
         ["Black-Scholes", "Binomial", "Monte Carlo"],
         index=0
     )
@@ -1644,911 +1196,473 @@ def setup_sidebar():
         model_params['n_simulations'] = st.sidebar.slider("Number of Simulations", 1000, 50000, 10000)
         model_params['n_steps'] = st.sidebar.slider("Time Steps", 50, 500, 100)
     
+    # Advanced options
+    if st.sidebar.checkbox("Advanced Market Parameters", False):
+        st.sidebar.markdown("### Advanced Parameters")
+        
+        # Volatility term structure
+        vol_term_structure = st.sidebar.checkbox("Use Volatility Term Structure", False)
+        if vol_term_structure:
+            vol_3m = st.sidebar.number_input("3-Month Volatility", value=volatility*0.9, step=0.01, format="%.2f")
+            vol_6m = st.sidebar.number_input("6-Month Volatility", value=volatility, step=0.01, format="%.2f")
+            vol_12m = st.sidebar.number_input("12-Month Volatility", value=volatility*1.1, step=0.01, format="%.2f")
+            model_params['vol_term_structure'] = {
+                0.25: vol_3m,
+                0.5: vol_6m,
+                1.0: vol_12m
+            }
+        
+        # Interest rate term structure
+        rate_term_structure = st.sidebar.checkbox("Use Rate Term Structure", False)
+        if rate_term_structure:
+            rate_3m = st.sidebar.number_input("3-Month Rate", value=risk_free_rate*0.8, step=0.001, format="%.3f")
+            rate_6m = st.sidebar.number_input("6-Month Rate", value=risk_free_rate, step=0.001, format="%.3f")
+            rate_12m = st.sidebar.number_input("12-Month Rate", value=risk_free_rate*1.2, step=0.001, format="%.3f")
+            model_params['rate_term_structure'] = {
+                0.25: rate_3m,
+                0.5: rate_6m,
+                1.0: rate_12m
+            }
+        
+        # Dividend yield
+        div_yield = st.sidebar.number_input("Dividend Yield", value=0.0, step=0.001, format="%.3f")
+        if div_yield > 0:
+            model_params['dividend_yield'] = div_yield
+        
+        # Market skew parameter
+        skew = st.sidebar.slider("Volatility Skew", -0.2, 0.2, 0.0, 0.01)
+        if skew != 0:
+            model_params['skew'] = skew
+    
     return model_type, current_price, strike_price, time_to_maturity, volatility, risk_free_rate, model_params
 
-strategy_descriptions = {
-    # Call Option Strategies
-    "Covered Call Writing": """
-        A strategy that involves holding a long stock position and selling a call option on that same stock.
-        - Generates additional income from option premium
-        - Provides limited downside protection
-        - Limits potential upside gains
-        - Popular among income-focused investors
-        Maximum Profit: Limited to strike price - purchase price + premium
-        Maximum Loss: Stock price - premium received
-    """,
-    
-    "Long Call": """
-        The most basic bullish options strategy, buying a call option.
-        - Limited risk to premium paid
-        - Unlimited profit potential
-        - Provides leverage compared to buying stock
-        - Suitable for strong bullish views
-        Maximum Profit: Unlimited
-        Maximum Loss: Limited to premium paid
-    """,
-    
-    "Protected Short Sale": """
-        Combining a short stock position with a long call option (Synthetic Put).
-        - Limits upside risk with call option
-        - Profits from stock price decline
-        - Higher cost than direct put purchase
-        - Useful when puts are overpriced
-        Maximum Profit: Stock price - strike price + premium
-        Maximum Loss: Limited to call premium
-    """,
-    
-    "Reverse Hedge": """
-        Buying both a call and put option at the same strike (Simulated Straddle).
-        - Profits from large price movements in either direction
-        - Limited risk to premiums paid
-        - High cost due to two option purchases
-        - Best when high volatility is expected
-        Maximum Profit: Unlimited
-        Maximum Loss: Limited to total premium paid
-    """,
-    
-    "Naked Call Writing": """
-        Selling call options without owning the underlying stock.
-        - Generates immediate premium income
-        - High risk due to unlimited potential losses
-        - Requires significant margin
-        - Suitable for neutral to slightly bearish outlook
-        Maximum Profit: Limited to premium received
-        Maximum Loss: Unlimited
-    """,
-    
-    "Ratio Call Writing": """
-        Writing more calls than the number of shares owned.
-        - Enhanced premium income
-        - Increased risk above strike price
-        - Complex risk/reward profile
-        - Requires careful monitoring
-        Maximum Profit: Limited to premiums + stock appreciation to strike
-        Maximum Loss: Potentially unlimited above higher strike
-    """,
-    
-    "Bull Call Spread": """
-        Buying a call option while selling another at a higher strike.
-        - Reduced cost versus outright call purchase
-        - Limited risk and reward
-        - Lower break-even point
-        - Good for moderately bullish views
-        Maximum Profit: Difference between strikes - net premium paid
-        Maximum Loss: Limited to net premium paid
-    """,
-    
-    "Bear Call Spread": """
-        Selling a call option while buying another at a higher strike.
-        - Credit received at initiation
-        - Limited risk and reward
-        - Profits from falling or stable prices
-        - Good for moderately bearish views
-        Maximum Profit: Limited to net premium received
-        Maximum Loss: Difference between strikes - net premium received
-    """,
-    
-    # Put Option Strategies
-    "Long Put": """
-        Buying a put option for downside speculation or protection.
-        - Limited risk, defined by premium paid
-        - Substantial profit potential
-        - Leveraged downside exposure
-        - Good for bearish views
-        Maximum Profit: Strike price - premium paid
-        Maximum Loss: Limited to premium paid
-    """,
+# Calculate option prices
+def calculate_option_prices(model_type, current_price, strike_price, time_to_maturity, risk_free_rate, volatility, model_params):
+    """Calculate option prices based on the selected model"""
+    if model_type == "Black-Scholes":
+        call_value = black_scholes_calc(current_price, strike_price, time_to_maturity,
+                                      risk_free_rate, volatility, 'call')
+        put_value = black_scholes_calc(current_price, strike_price, time_to_maturity,
+                                     risk_free_rate, volatility, 'put')
+        return {"call": f"${call_value:.2f}", "put": f"${put_value:.2f}"}, call_value, put_value, None
+        
+    elif model_type == "Binomial":
+        steps = model_params.get('steps', 100)
+        option_style = model_params.get('option_style', 'European').lower()
+        call_value = binomial_calc(current_price, strike_price, time_to_maturity,
+                                 risk_free_rate, volatility, steps, 'call', option_style)
+        put_value = binomial_calc(current_price, strike_price, time_to_maturity,
+                                risk_free_rate, volatility, steps, 'put', option_style)
+        return {"call": f"${call_value:.2f}", "put": f"${put_value:.2f}"}, call_value, put_value, None
+        
+    else:  # Monte Carlo
+        n_simulations = model_params.get('n_simulations', 10000)
+        n_steps = model_params.get('n_steps', 100)
+        call_value, call_se, call_paths = monte_carlo_calc(current_price, strike_price,
+                                                         time_to_maturity, risk_free_rate,
+                                                         volatility, n_simulations, n_steps, 'call')
+        put_value, put_se, put_paths = monte_carlo_calc(current_price, strike_price,
+                                                      time_to_maturity, risk_free_rate,
+                                                      volatility, n_simulations, n_steps, 'put')
+        price_info = {
+            "call": f"${call_value:.2f} ± ${call_se:.4f}",
+            "put": f"${put_value:.2f} ± ${put_se:.4f}"
+        }
+        return price_info, call_value, put_value, (call_paths, put_paths, n_steps)
 
-    "Protective Put": """
-        Buying puts against long stock position.
-        - Insurance against stock decline
-        - Unlimited upside potential
-        - Known maximum loss
-        - Portfolio protection strategy
-        Maximum Profit: Unlimited
-        Maximum Loss: Limited to put premium paid
-    """,
-
-    # Combined Strategies
-    "Long Straddle": """
-        Buying both a call and put at the same strike price.
-        - Profits from large price movements
-        - Direction doesn't matter
-        - High cost strategy
-        - Volatility play
-        Maximum Profit: Unlimited
-        Maximum Loss: Limited to total premium paid
-    """,
-
-    "Short Straddle": """
-        Selling both a call and put at the same strike price.
-        - Collects double premium
-        - Profits from low volatility
-        - High risk strategy
-        - Requires significant margin
-        Maximum Profit: Limited to total premium received
-        Maximum Loss: Unlimited
-    """,
-
-    "Iron Butterfly": """
-        Combination of bull put spread and bear call spread.
-        - Limited risk and reward
-        - Complex position
-        - Market neutral strategy
-        - Benefits from time decay
-        Maximum Profit: Net premium received
-        Maximum Loss: Limited to difference between strikes - net premium
-    """,
-
-    "Iron Condor": """
-        Wider version of iron butterfly using four strikes.
-        - Limited risk and reward
-        - Higher probability of profit
-        - Market neutral strategy
-        - Popular among income seekers
-        Maximum Profit: Net premium received
-        Maximum Loss: Limited to difference between middle strikes - net premium
-    """
-}
-
-def display_strategy_analysis(current_price, strike_price, time_to_maturity, risk_free_rate, volatility):
-    """Display strategy analysis section"""
-    st.markdown("---")
-    st.title("Options Strategy Analysis")
-    
-    # Strategy Categories
-    strategy_category = st.selectbox(
-        "Select Strategy Category",
-        ["Call Option Strategies", "Put Option Strategies", "Combined Strategies"]
-    )
-    
-    # Comprehensive strategy lists
-    call_strategies = [
-        "Covered Call Writing",
-        "Long Call",
-        "Protected Short Sale (Synthetic Put)",
-        "Reverse Hedge (Simulated Straddle)",
-        "Naked Call Writing",
-        "Ratio Call Writing",
-        "Bull Call Spread",
-        "Bear Call Spread",
-        "Calendar Call Spread",
-        "Butterfly Call Spread",
-        "Ratio Call Spread",
-        "Ratio Calendar Call Spread",
-        "Delta-Neutral Calendar Spread",
-        "Reverse Calendar Call Spread",
-        "Reverse Ratio Call Spread (Backspread)",
-        "Diagonal Bull Call Spread"
-    ]
-
-    put_strategies = [
-        "Long Put",
-        "Protective Put",
-        "Put with Covered Call",
-        "No-Cost Collar",
-        "Naked Put Writing",
-        "Covered Put Sale",
-        "Ratio Put Writing",
-        "Bear Put Spread",
-        "Bull Put Spread",
-        "Calendar Put Spread",
-        "Butterfly Put Spread",
-        "Ratio Put Spread",
-        "Ratio Put Calendar Spread"
-    ]
-
-    combined_strategies = [
-        "Long Straddle",
-        "Short Straddle",
-        "Long Strangle",
-        "Short Strangle",
-        "Synthetic Long Stock",
-        "Synthetic Short Stock",
-        "Iron Butterfly",
-        "Iron Condor"
-    ]
-
-    # Display strategy selection based on category
-    if strategy_category == "Call Option Strategies":
-        strategy = st.selectbox("Select Strategy", call_strategies)
-    elif strategy_category == "Put Option Strategies":
-        strategy = st.selectbox("Select Strategy", put_strategies)
-    else:
-        strategy = st.selectbox("Select Strategy", combined_strategies)
-
-    # Calculate strategy metrics
-    spot_range = np.linspace(current_price * 0.5, current_price * 1.5, 100)
-    
-    # Calculate initial option values
-    call_value = black_scholes_calc(current_price, strike_price, time_to_maturity,
-                                  risk_free_rate, volatility, 'call')
-    put_value = black_scholes_calc(current_price, strike_price, time_to_maturity,
-                                 risk_free_rate, volatility, 'put')
-    
-    pnl = calculate_strategy_pnl(
-        strategy,
-        spot_range,
-        current_price,
-        strike_price,
-        time_to_maturity,
-        risk_free_rate,
-        volatility,
-        call_value,
-        put_value
+# The main function
+def main():
+    """Main application execution flow"""
+    # Page Configuration - keep outside try block
+    st.set_page_config(
+        page_title="Options Pricing Models",
+        page_icon="📊",
+        layout="wide",
+        initial_sidebar_state="expanded"
     )
 
-    # Create P&L visualization
-    plt.style.use('dark_background')
-    fig_pnl = plt.figure(figsize=(12, 6))
-    plt.plot(spot_range, pnl, 'g-', linewidth=2, label='P&L Profile')
-    plt.axhline(y=0, color='r', linestyle='--', alpha=0.5, label='Break-even Line')
-    plt.grid(True, alpha=0.2)
-    plt.xlabel('Stock Price ($)')
-    plt.ylabel('Profit/Loss ($)')
-    plt.title(f'{strategy} P&L Profile')
-    plt.legend()
-
-    # Add break-even points
-    break_even_points = spot_range[np.where(np.diff(np.signbit(pnl)))[0]]
-    for point in break_even_points:
-        plt.axvline(x=point, color='yellow', linestyle='--', alpha=0.3)
-        plt.text(point, plt.ylim()[0], f'BE: {point:.2f}', rotation=90,
-                verticalalignment='bottom', color='yellow')
-
-    st.pyplot(fig_pnl)
-
-    # Display strategy metrics
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown(f"""
-            <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
-                <h3 style="color: white;">Strategy Metrics</h3>
-                <p style="color: white;">Break-even Point(s): {', '.join([f"${x:.2f}" for x in break_even_points])}</p>
-                <p style="color: white;">Maximum Profit: ${max(pnl):.2f}</p>
-                <p style="color: white;">Maximum Loss: ${abs(min(pnl)):.2f}</p>
-                <p style="color: white;">Current Delta: {calculate_delta(strategy, current_price, strike_price, time_to_maturity, risk_free_rate, volatility):.2f}</p>
-            </div>
-        """, unsafe_allow_html=True)
-
-    with col2:
-        st.markdown(f"""
-            <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
-                <h3 style="color: white;">Position Details</h3>
-                <p style="color: white;">Current Stock Price: ${current_price:.2f}</p>
-                <p style="color: white;">Strike Price: ${strike_price:.2f}</p>
-                <p style="color: white;">Days to Expiration: {time_to_maturity * 365:.0f}</p>
-                <p style="color: white;">Implied Volatility: {volatility:.1%}</p>
-            </div>
-        """, unsafe_allow_html=True)
-
-    # Display strategy description and characteristics
+    # CSS Styles - can stay outside try block too
     st.markdown("""
-        <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px; margin-top: 20px;">
-            <h3 style="color: white;">Strategy Description</h3>
-            <p style="color: white;">{}</p>
-            <h4 style="color: white;">Advantages</h4>
-            <ul style="color: white;">
-                {}
-            </ul>
-            <h4 style="color: white;">Disadvantages</h4>
-            <ul style="color: white;">
-                {}
-            </ul>
-            <h4 style="color: white;">Market Conditions</h4>
-            <p style="color: white;">{}</p>
-        </div>
-    """.format(
-        strategy_descriptions.get(strategy, "Description not available"),
-        "\n".join([f"<li>{adv}</li>" for adv in strategy_advantages.get(strategy, ["Not available"])]),
-        "\n".join([f"<li>{dis}</li>" for dis in strategy_disadvantages.get(strategy, ["Not available"])]),
-        strategy_market_conditions.get(strategy, "Market conditions not available")
-    ), unsafe_allow_html=True)
-
-    # Add risk management section
-    st.markdown("### Risk and Trade Management")
-    
-    # Calculate Greeks
-    calculated_greeks = calculate_strategy_greeks(
-        strategy,
-        current_price,
-        strike_price,
-        time_to_maturity,
-        risk_free_rate,
-        volatility
-    )
-
-    # Display Greeks interpretation
-    st.markdown("""
-        <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px; margin-top: 1rem;">
-            <h4 style="color: white;">Greeks Interpretation</h4>
-            <ul style="color: white; list-style-type: none; padding-left: 0;">
-                <li>• Delta: Measure of directional risk ({:.1%} change per $1 move in underlying)</li>
-                <li>• Gamma: Rate of change in Delta ({:.3f} per $1 move)</li>
-                <li>• Theta: Time decay (${:.2f} per day)</li>
-                <li>• Vega: Volatility sensitivity ({:.2f} per 1% change in volatility)</li>
-            </ul>
-        </div>
-        """.format(
-            calculated_greeks['delta'],
-            calculated_greeks['gamma'],
-            calculated_greeks['theta'],
-            calculated_greeks['vega']
-        ), unsafe_allow_html=True)
-
-    return strategy
-
-def display_heatmap(spot_prices, volatilities, call_pnl, put_pnl):
-    """Display P&L heatmaps for both call and put options"""
-    # Title
-    st.title("Options Price - Interactive Heatmap")
-    st.info("Explore how profits/losses fluctuate with varying 'Spot Prices and Volatility' levels while maintaining a constant 'Strike Price'.")
-
-    # Create two columns for side-by-side heatmaps
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("Call Option P&L Heatmap")
-        fig1, ax1 = plt.subplots(figsize=(10, 8))
-        
-        # Calculate max absolute value for symmetric color scaling
-        max_abs_call = max(abs(call_pnl.min()), abs(call_pnl.max()))
-        
-        # Create heatmap for call options
-        sns.heatmap(
-            call_pnl,
-            annot=True,
-            fmt='.2f',
-            cmap=create_pnl_colormap(),
-            center=0,  # Center the colormap at zero
-            vmin=-max_abs_call,  # Symmetric color scaling
-            vmax=max_abs_call,
-            ax=ax1,
-            xticklabels=[f'{p:.2f}' for p in spot_prices],
-            yticklabels=[f'{v:.2f}' for v in volatilities]
-        )
-        ax1.set_xlabel('Spot Price')
-        ax1.set_ylabel('Volatility')
-        plt.title('Call Option P&L\nGreen = Profit, Red = Loss')
-        st.pyplot(fig1)
-
-        # Add P&L statistics for calls
-        st.markdown(f"""
-            **Call Option P&L Statistics:**
-            - Max Profit: ${call_pnl.max():.2f}
-            - Max Loss: ${abs(call_pnl.min()):.2f}
-            - Break-even points: Spot price where P&L = $0
-            - Optimal Volatility Level: {volatilities[np.argmax(np.max(call_pnl, axis=1))]:.2%}
-        """)
-
-    with col2:
-        st.subheader("Put Option P&L Heatmap")
-        fig2, ax2 = plt.subplots(figsize=(10, 8))
-        
-        # Calculate max absolute value for symmetric color scaling
-        max_abs_put = max(abs(put_pnl.min()), abs(put_pnl.max()))
-        
-        # Create heatmap for put options
-        sns.heatmap(
-            put_pnl,
-            annot=True,
-            fmt='.2f',
-            cmap=create_pnl_colormap(),
-            center=0,  # Center the colormap at zero
-            vmin=-max_abs_put,  # Symmetric color scaling
-            vmax=max_abs_put,
-            ax=ax2,
-            xticklabels=[f'{p:.2f}' for p in spot_prices],
-            yticklabels=[f'{v:.2f}' for v in volatilities]
-        )
-        ax2.set_xlabel('Spot Price')
-        ax2.set_ylabel('Volatility')
-        plt.title('Put Option P&L\nGreen = Profit, Red = Loss')
-        st.pyplot(fig2)
-
-        # Add P&L statistics for puts
-        st.markdown(f"""
-            **Put Option P&L Statistics:**
-            - Max Profit: ${put_pnl.max():.2f}
-            - Max Loss: ${abs(put_pnl.min()):.2f}
-            - Break-even points: Spot price where P&L = $0
-            - Optimal Volatility Level: {volatilities[np.argmax(np.max(put_pnl, axis=1))]:.2%}
-        """)
-
-    # Add overall explanation
-    st.markdown("""
-        ---
-        ### Understanding the P&L Heatmap:
-        - **Green cells**: Represent profitable scenarios (positive P&L)
-        - **Red cells**: Represent loss scenarios (negative P&L)
-        - **Color intensity**: Indicates the magnitude of profit/loss
-        - **Numbers in cells**: Actual P&L values in dollars
-        - **X-axis**: Different spot prices of the underlying asset
-        - **Y-axis**: Different volatility levels
-        
-        ### Key Insights:
-        - The darker the green, the higher the profit
-        - The darker the red, the larger the loss
-        - White or light-colored areas represent break-even or near break-even points
-        - The gradient shows how P&L changes with different price and volatility combinations
-        
-        ### Trading Implications:
-        - Use these heatmaps to identify optimal entry and exit points
-        - Understand how volatility affects your position's P&L
-        - Plan risk management strategies based on potential loss scenarios
-        - Identify price ranges where the position performs best
-    """)
-
-    # Add volatility analysis
-    st.markdown("""
-        ### Volatility Impact Analysis
-        """)
-    
-    col3, col4 = st.columns(2)
-    
-    with col3:
-        # Calculate optimal volatility levels for call options
-        optimal_vol_call = volatilities[np.argmax(np.max(call_pnl, axis=1))]
-        worst_vol_call = volatilities[np.argmin(np.min(call_pnl, axis=1))]
-        
-        st.markdown(f"""
-            **Call Option Volatility Analysis:**
-            - Best performing volatility: {optimal_vol_call:.1%}
-            - Worst performing volatility: {worst_vol_call:.1%}
-            - Volatility sensitivity: {'High' if np.std(call_pnl) > np.mean(np.abs(call_pnl)) else 'Low'}
-        """)
-        
-    with col4:
-        # Calculate optimal volatility levels for put options
-        optimal_vol_put = volatilities[np.argmax(np.max(put_pnl, axis=1))]
-        worst_vol_put = volatilities[np.argmin(np.min(put_pnl, axis=1))]
-        
-        st.markdown(f"""
-            **Put Option Volatility Analysis:**
-            - Best performing volatility: {optimal_vol_put:.1%}
-            - Worst performing volatility: {worst_vol_put:.1%}
-            - Volatility sensitivity: {'High' if np.std(put_pnl) > np.mean(np.abs(put_pnl)) else 'Low'}
-        """)
-
-    # Add price range analysis
-    st.markdown("""
-        ### Price Range Analysis
-        """)
-    
-    col5, col6 = st.columns(2)
-    
-    with col5:
-        # Calculate optimal price ranges for call options
-        optimal_price_call = spot_prices[np.argmax(np.max(call_pnl, axis=0))]
-        worst_price_call = spot_prices[np.argmin(np.min(call_pnl, axis=0))]
-        
-        st.markdown(f"""
-            **Call Option Price Analysis:**
-            - Most profitable price: ${optimal_price_call:.2f}
-            - Least profitable price: ${worst_price_call:.2f}
-            - Price sensitivity: {'High' if np.std(call_pnl) > np.mean(np.abs(call_pnl)) else 'Low'}
-        """)
-        
-    with col6:
-        # Calculate optimal price ranges for put options
-        optimal_price_put = spot_prices[np.argmax(np.max(put_pnl, axis=0))]
-        worst_price_put = spot_prices[np.argmin(np.min(put_pnl, axis=0))]
-        
-        st.markdown(f"""
-            **Put Option Price Analysis:**
-            - Most profitable price: ${optimal_price_put:.2f}
-            - Least profitable price: ${worst_price_put:.2f}
-            - Price sensitivity: {'High' if np.std(put_pnl) > np.mean(np.abs(put_pnl)) else 'Low'}
-        """)
-
-    # Add risk management recommendations
-    st.markdown("""
-        ### Risk Management Recommendations
-        
-        Based on the heatmap analysis, consider the following risk management strategies:
-        
-        1. **Position Sizing:**
-           - Size positions based on maximum potential loss scenarios
-           - Consider reducing position size in high volatility environments
-        
-        2. **Stop Losses:**
-           - Set stops based on the red zones in the heatmap
-           - Consider volatility-adjusted stops for better risk management
-        
-        3. **Profit Targets:**
-           - Use the green zones to identify realistic profit targets
-           - Consider scaling out of positions in highly profitable areas
-        
-        4. **Volatility Management:**
-           - Monitor implied volatility changes and their impact on P&L
-           - Consider adjusting positions when approaching extreme volatility levels
-    """)
-
-def create_pnl_colormap():
-    """Create custom red-white-green colormap for P&L visualization"""
-    colors = ['darkred', 'red', 'white', 'lightgreen', 'darkgreen']
-    nodes = [0.0, 0.25, 0.5, 0.75, 1.0]
-    return LinearSegmentedColormap.from_list('pnl_colormap', list(zip(nodes, colors)))
-
-# Testing Framework
-def run_model_tests():
-    """Comprehensive model testing framework"""
-    try:
-        with st.spinner("Running model tests..."):
-            test_results = {
-                'black_scholes': test_black_scholes(),
-                'binomial': test_binomial_model(),
-                'monte_carlo': test_monte_carlo(),
-                'all_passed': True
-            }
-            
-            if all([result for result in test_results.values() if result is not None]):
-                st.success("All model tests passed successfully!")
-                
-                # Display detailed test results
-                with st.expander("Black-Scholes Test Results"):
-                    for i, result in enumerate(test_results['black_scholes']):
-                        st.write(f"Test Case {i+1}:")
-                        st.write(f"Parameters: {result['parameters']}")
-                        st.write(f"Call Price: ${result['call_price']:.4f}")
-                        st.write(f"Put Price: ${result['put_price']:.4f}")
-                        st.write(f"Put-Call Parity Check: {'✓' if result['parity_check'] else '✗'}")
-                        st.write("---")
-                
-                with st.expander("Binomial Model Test Results"):
-                    for i, result in enumerate(test_results['binomial']):
-                        st.write(f"Test Case {i+1}:")
-                        st.write(f"Parameters: {result['parameters']}")
-                        st.write(f"European Call: ${result['european_call']:.4f}")
-                        st.write(f"European Put: ${result['european_put']:.4f}")
-                        st.write(f"American Call: ${result['american_call']:.4f}")
-                        st.write(f"American Put: ${result['american_put']:.4f}")
-                        st.write("---")
-                
-                with st.expander("Monte Carlo Test Results"):
-                    for i, result in enumerate(test_results['monte_carlo']):
-                        st.write(f"Test Case {i+1}:")
-                        st.write(f"Parameters: {result['parameters']}")
-                        st.write(f"Monte Carlo Call: ${result['monte_carlo_call']:.4f}")
-                        st.write(f"Monte Carlo Put: ${result['monte_carlo_put']:.4f}")
-                        st.write(f"Standard Error: ${result['standard_error']:.4f}")
-                        st.write("---")
-            else:
-                st.error("Some tests failed. Check the detailed results below.")
-                
-    except Exception as e:
-        st.error(f"Error during testing: {str(e)}")
-
-def run_all_tests():
-    """Run all model tests and return comprehensive results."""
-    test_results = {
-        'black_scholes': None,
-        'binomial': None,
-        'monte_carlo': None,
-        'all_passed': False
-    }
-    
-    try:
-        test_results['black_scholes'] = test_black_scholes()
-        test_results['binomial'] = test_binomial_model()
-        test_results['monte_carlo'] = test_monte_carlo()
-        test_results['all_passed'] = all([
-            len(test_results['black_scholes']) > 0,
-            len(test_results['binomial']) > 0,
-            len(test_results['monte_carlo']) > 0
-        ])
-        
-        # Verify test content
-        if test_results['all_passed']:
-            # Verify Black-Scholes tests
-            for result in test_results['black_scholes']:
-                if not result['parity_check']:
-                    test_results['all_passed'] = False
-                    raise Exception("Black-Scholes put-call parity check failed")
-            
-            # Verify Binomial tests
-            for result in test_results['binomial']:
-                if not result['validity_check']:
-                    test_results['all_passed'] = False
-                    raise Exception("Binomial model early exercise premium check failed")
-            
-            # Verify Monte Carlo tests
-            for result in test_results['monte_carlo']:
-                if not result['accuracy_check']:
-                    test_results['all_passed'] = False
-                    raise Exception("Monte Carlo accuracy check failed")
-        
-        return test_results
-        
-    except Exception as e:
-        test_results['error'] = str(e)
-        test_results['all_passed'] = False
-        return test_results
-
-# Utility Functions
-def calculate_pnl_matrices(model_type, spot_prices, volatilities, current_price,
-                         strike_price, time_to_maturity, risk_free_rate, model_params):
-    """Calculate P&L matrices for heatmap visualization"""
-    call_pnl = np.zeros((len(volatilities), len(spot_prices)))
-    put_pnl = np.zeros((len(volatilities), len(spot_prices)))
-    
-    for i, vol in enumerate(volatilities):
-        for j, spot in enumerate(spot_prices):
-            if model_type == "Black-Scholes":
-                call_value = black_scholes_calc(spot, strike_price, time_to_maturity,
-                                              risk_free_rate, vol, 'call')
-                put_value = black_scholes_calc(spot, strike_price, time_to_maturity,
-                                             risk_free_rate, vol, 'put')
-                
-            elif model_type == "Binomial":
-                steps = model_params.get('steps', 100)
-                style = model_params.get('option_style', 'european').lower()
-                call_value = binomial_calc(spot, strike_price, time_to_maturity,
-                                         risk_free_rate, vol, steps, 'call', style)
-                put_value = binomial_calc(spot, strike_price, time_to_maturity,
-                                        risk_free_rate, vol, steps, 'put', style)
-                
-            else:  # Monte Carlo
-                n_sim = model_params.get('n_simulations', 10000)
-                n_steps = model_params.get('n_steps', 100)
-                call_value, _, _ = monte_carlo_calc(spot, strike_price, time_to_maturity,
-                                                  risk_free_rate, vol, n_sim, n_steps, 'call')
-                put_value, _, _ = monte_carlo_calc(spot, strike_price, time_to_maturity,
-                                                 risk_free_rate, vol, n_sim, n_steps, 'put')
-            
-            call_pnl[i, j] = call_value - model_params.get('call_purchase_price', 0)
-            put_pnl[i, j] = put_value - model_params.get('put_purchase_price', 0)
-            
-    return call_pnl, put_pnl
-
-def format_price_output(value, model_type, standard_error=None):
-    """Format price output based on model type"""
-    if model_type == "Monte Carlo" and standard_error is not None:
-        return f"${value:.2f} ± ${standard_error:.4f}"
-    return f"${value:.2f}"
-
-# Error Handling and Validation
-class OptionPricingError(Exception):
-    """Custom exception for option pricing errors"""
-    pass
-
-def validate_model_parameters(model_type, params):
-    """Validate model-specific parameters"""
-    try:
-        if model_type == "Binomial":
-            if params.get('steps', 0) < 10:
-                raise OptionPricingError("Binomial model requires at least 10 steps")
-        elif model_type == "Monte Carlo":
-            if params.get('n_simulations', 0) < 1000:
-                raise OptionPricingError("Monte Carlo requires at least 1000 simulations")
-            if params.get('n_steps', 0) < 50:
-                raise OptionPricingError("Monte Carlo requires at least 50 time steps")
-        
-        return True
-    except Exception as e:
-        st.error(f"Parameter validation failed: {str(e)}")
-        return False
-
-def handle_calculation_errors(func):
-    """Decorator for handling calculation errors"""
-    def wrapper(*args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        except Exception as e:
-            st.error(f"Calculation error: {str(e)}")
-            return None
-    return wrapper
-
-# Final Layout and Display Functions
-def display_footnotes():
-    """Display footnotes and assumptions"""
-    st.markdown("""
-        <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px; margin-top: 20px;">
-            <h4 style="color: white;">Assumptions and Notes</h4>
-            <ul style="color: white;">
-                <li>All calculations assume European-style options unless specified</li>
-                <li>Transaction costs and taxes are not included</li>
-                <li>Implied volatility is assumed constant across strikes</li>
-                <li>Interest rates are assumed constant over the option's life</li>
-                <li>No dividend considerations are included</li>
-            </ul>
-        </div>
+        <style>
+        .greek-card {
+            background-color: #2E2E2E;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            margin: 0.5rem;
+        }
+        .greek-label { color: #9CA3AF; font-size: 0.875rem; }
+        .greek-value { color: white; font-size: 1.25rem; font-weight: 600; }
+        .main { background-color: #0E1117; }
+        </style>
     """, unsafe_allow_html=True)
 
-def display_documentation():
-    """Display model documentation and help"""
-    with st.expander("Documentation and Help"):
-        st.markdown("""
-            ### Using the Options Calculator
-            1. Select your preferred pricing model from the sidebar
-            2. Enter the required parameters
-            3. View the calculated option prices and Greeks
-            4. Explore the P&L heatmap for different scenarios
-            
-            ### Model Descriptions
-            - **Black-Scholes**: Classical model for European options
-            - **Binomial**: Flexible model supporting American options
-            - **Monte Carlo**: Simulation-based model with error estimates
-        """)
-
-def main():
-    """Main application execution flow with error handling and validation"""
+    # Author Section
+    st.markdown("<a href='https://www.linkedin.com/in/navnoorbawa/' target='_blank'>Created by Navnoor Bawa</a>", unsafe_allow_html=True)
+    
     try:
         # Setup sidebar and get parameters
         model_type, current_price, strike_price, time_to_maturity, volatility, risk_free_rate, model_params = setup_sidebar()
         
-        # Validate inputs
-        if not validate_model_parameters(model_type, model_params):
-            st.error("Invalid model parameters. Please check your inputs.")
-            return
-        
         # Title and model selection display
-        st.markdown(f"# 📈 {model_type} Model")
-        
-        # Display documentation
-        display_documentation()
+        st.markdown(f"# 📈 {model_type} Option Pricing Model")
         
         # Calculate prices based on selected model
         with st.spinner("Calculating prices..."):
-            if model_type == "Black-Scholes":
-                call_value = black_scholes_calc(current_price, strike_price, time_to_maturity,
-                                              risk_free_rate, volatility, 'call')
-                put_value = black_scholes_calc(current_price, strike_price, time_to_maturity,
-                                             risk_free_rate, volatility, 'put')
-                price_info = {"call": f"${call_value:.2f}", "put": f"${put_value:.2f}"}
-                
-            elif model_type == "Binomial":
-                steps = model_params.get('steps', 100)
-                option_style = model_params.get('option_style', 'European').lower()
-                call_value = binomial_calc(current_price, strike_price, time_to_maturity,
-                                         risk_free_rate, volatility, steps, 'call', option_style)
-                put_value = binomial_calc(current_price, strike_price, time_to_maturity,
-                                        risk_free_rate, volatility, steps, 'put', option_style)
-                price_info = {"call": f"${call_value:.2f}", "put": f"${put_value:.2f}"}
-                
-            else:  # Monte Carlo
-                n_simulations = model_params.get('n_simulations', 10000)
-                n_steps = model_params.get('n_steps', 100)
-                call_value, call_se, call_paths = monte_carlo_calc(current_price, strike_price,
-                                                                 time_to_maturity, risk_free_rate,
-                                                                 volatility, n_simulations, n_steps, 'call')
-                put_value, put_se, put_paths = monte_carlo_calc(current_price, strike_price,
-                                                              time_to_maturity, risk_free_rate,
-                                                              volatility, n_simulations, n_steps, 'put')
-                price_info = {
-                    "call": f"${call_value:.2f} ± ${call_se:.4f}",
-                    "put": f"${put_value:.2f} ± ${put_se:.4f}"
-                }
+            price_info, call_value, put_value, paths_data = calculate_option_prices(
+                model_type, current_price, strike_price, time_to_maturity,
+                risk_free_rate, volatility, model_params
+            )
 
         # Display option prices
         display_option_prices(price_info)
-
-        # Strategy Analysis
-        strategy = display_strategy_analysis(
-            current_price,
-            strike_price,
-            time_to_maturity,
-            risk_free_rate,
-            volatility
-        )
         
-        # Calculate and display Greeks
-        calculated_greeks = calculate_strategy_greeks(
-            strategy,
-            current_price,
-            strike_price,
-            time_to_maturity,
-            risk_free_rate,
-            volatility
-        )
-        display_greeks(calculated_greeks)
+        # Add tabs for different functionalities
+        main_tab, strategy_tab, quant_tab = st.tabs(["Basic Analysis", "Strategy Analysis", "Quant Research"])
         
-        # Generate and display heatmap
-        with st.spinner("Generating heatmap..."):
-            # Get heatmap parameters from sidebar
-            min_spot = st.sidebar.number_input("Min Spot Price", value=current_price * 0.8, step=0.01)
-            max_spot = st.sidebar.number_input("Max Spot Price", value=current_price * 1.2, step=0.01)
-            min_vol = st.sidebar.slider("Min Volatility for Heatmap", 0.01, 1.00, 0.10)
-            max_vol = st.sidebar.slider("Max Volatility for Heatmap", 0.01, 1.00, 0.30)
+        with main_tab:
+            # Display Greeks
+            calculated_greeks = calculate_greeks("Call", current_price, strike_price,
+                                             time_to_maturity, risk_free_rate, volatility)
+            display_greeks(calculated_greeks)
             
-            # Purchase price inputs
-            st.sidebar.markdown("## Option Purchase Prices")
-            call_purchase_price = st.sidebar.number_input("Call Option Purchase Price", value=0.00, step=0.01)
-            put_purchase_price = st.sidebar.number_input("Put Option Purchase Price", value=0.00, step=0.01)
+            # Display advanced Greeks if requested
+            if st.checkbox("Show Advanced Greeks"):
+                advanced_greeks = calculate_advanced_greeks("Call", current_price, strike_price,
+                                                        time_to_maturity, risk_free_rate, volatility)
+                st.markdown("### Advanced Greeks")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"""
+                        <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
+                            <h4 style="color: white;">Second-Order Greeks</h4>
+                            <ul style="color: white; list-style-type: none; padding-left: 0;">
+                                <li>• Vanna: {advanced_greeks['vanna']:.4f} (Delta-Vega Sensitivity)</li>
+                                <li>• Charm: {advanced_greeks['charm']:.4f} (Delta Decay)</li>
+                                <li>• Volga: {advanced_greeks['volga']:.4f} (Vega Convexity)</li>
+                                <li>• Veta: {advanced_greeks['veta']:.4f} (Vega Decay)</li>
+                            </ul>
+                        </div>
+                    """, unsafe_allow_html=True)
+                
+                with col2:
+                    st.markdown(f"""
+                        <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
+                            <h4 style="color: white;">Third-Order Greeks</h4>
+                            <ul style="color: white; list-style-type: none; padding-left: 0;">
+                                <li>• Speed: {advanced_greeks['speed']:.4f} (Delta Acceleration)</li>
+                                <li>• Zomma: {advanced_greeks['zomma']:.4f} (Gamma-Volga)</li>
+                                <li>• Color: {advanced_greeks['color']:.4f} (Gamma Decay)</li>
+                                <li>• Ultima: {advanced_greeks['ultima']:.4f} (Volga-Volga)</li>
+                            </ul>
+                        </div>
+                    """, unsafe_allow_html=True)
             
-            spot_prices = np.linspace(min_spot, max_spot, 10)
-            volatilities = np.linspace(min_vol, max_vol, 10)
+            # Display Monte Carlo specific visualizations if selected
+            if model_type == "Monte Carlo" and paths_data:
+                call_paths, put_paths, n_steps = paths_data
+                st.subheader("Monte Carlo Simulation Paths")
+                fig = plt.figure(figsize=(10, 6))
+                plt.plot(np.linspace(0, time_to_maturity, n_steps), call_paths[:100].T, alpha=0.1)
+                plt.plot(np.linspace(0, time_to_maturity, n_steps), np.mean(call_paths, axis=0),
+                        'r', linewidth=2)
+                plt.xlabel('Time (years)')
+                plt.ylabel('Stock Price')
+                plt.title('Monte Carlo Simulation Paths (first 100 paths)')
+                st.pyplot(fig)
+        
+        with strategy_tab:
+            # Define strategy categories
+            call_strategies = ["Covered Call Writing", "Long Call", "Bull Call Spread", "Bear Call Spread"]
+            put_strategies = ["Long Put", "Protective Put", "Bull Put Spread", "Bear Put Spread"]
+            combined_strategies = ["Long Straddle", "Short Straddle", "Iron Butterfly", "Iron Condor"]
             
-            # Modified model_params to include purchase prices
-            model_params_with_prices = {
-                **model_params,
-                'call_purchase_price': call_purchase_price,
-                'put_purchase_price': put_purchase_price
+            st.title("Options Strategy Analysis")
+            
+            col1, col2 = st.columns([1, 2])
+            with col1:
+                strategy_category = st.selectbox("Select Strategy Category",
+                                              ["Call Option Strategies", "Put Option Strategies", "Combined Strategies"],
+                                              key="strategy_category")
+            
+            with col2:
+                if strategy_category == "Call Option Strategies":
+                    strategy = st.selectbox("Select Strategy", call_strategies, key="call_strategy")
+                elif strategy_category == "Put Option Strategies":
+                    strategy = st.selectbox("Select Strategy", put_strategies, key="put_strategy")
+                else:
+                    strategy = st.selectbox("Select Strategy", combined_strategies, key="combined_strategy")
+            
+            # Strategy explanation based on selection
+            strategy_explanations = {
+                "Covered Call Writing": "Own the stock and sell a call option. This strategy generates income but caps upside potential.",
+                "Long Call": "Purchase a call option to profit from upward price movements with limited risk.",
+                "Bull Call Spread": "Buy a lower strike call and sell a higher strike call. Reduces cost but caps profit potential.",
+                "Bear Call Spread": "Sell a lower strike call and buy a higher strike call. Generates income with limited risk.",
+                "Long Put": "Purchase a put option to profit from downward price movements with limited risk.",
+                "Protective Put": "Own the stock and buy a put option as insurance against downside risk.",
+                "Bull Put Spread": "Sell a higher strike put and buy a lower strike put. Generates income with limited risk.",
+                "Bear Put Spread": "Buy a higher strike put and sell a lower strike put. Reduces cost but caps profit potential.",
+                "Long Straddle": "Buy both a call and put at the same strike. Profit from large price movements in either direction.",
+                "Short Straddle": "Sell both a call and put at the same strike. Profit from low volatility and small price movements.",
+                "Iron Butterfly": "Combination of a bear call spread and bull put spread with the same middle strike.",
+                "Iron Condor": "Combination of a bear call spread and bull put spread with a gap between middle strikes."
             }
             
-            call_pnl, put_pnl = calculate_pnl_matrices(
-                model_type,
-                spot_prices,
-                volatilities,
-                current_price,
-                strike_price,
-                time_to_maturity,
-                risk_free_rate,
-                model_params_with_prices
+            st.info(strategy_explanations.get(strategy, ""))
+            
+            # Visualize strategy
+            spot_range = np.linspace(current_price * 0.5, current_price * 1.5, 200)
+            fig_pnl = create_strategy_visualization(
+                strategy, spot_range, current_price, strike_price,
+                time_to_maturity, risk_free_rate, volatility, call_value, put_value
             )
             
-            display_heatmap(spot_prices, volatilities, call_pnl, put_pnl)
+            st.pyplot(fig_pnl)
+            
+            # Display strategy greeks
+            st.subheader("Strategy Risk Profile")
+            calculated_greeks = calculate_strategy_greeks(
+                strategy, current_price, strike_price, time_to_maturity, risk_free_rate, volatility
+            )
+            display_greeks(calculated_greeks)
+            
+            # Calculate and display strategy performance metrics
+            if st.checkbox("Show Detailed Strategy Performance"):
+                perf_metrics = calculate_strategy_performance(
+                    strategy, current_price, strike_price, time_to_maturity,
+                    risk_free_rate, volatility, call_value, put_value
+                )
+                
+                st.subheader("Strategy Performance Metrics")
+                
+                # Profitability metrics
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"""
+                        <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
+                            <h4 style="color: white;">Profitability Metrics</h4>
+                            <ul style="color: white; list-style-type: none; padding-left: 0;">
+                                <li>• Max Profit: ${perf_metrics['profitability']['max_profit']:.2f}</li>
+                                <li>• Max Loss: ${perf_metrics['profitability']['max_loss']:.2f}</li>
+                                <li>• Risk-Reward Ratio: {perf_metrics['profitability']['risk_reward_ratio']:.2f}</li>
+                                <li>• Profit Probability: {perf_metrics['profitability']['profit_probability']:.1%}</li>
+                            </ul>
+                        </div>
+                    """, unsafe_allow_html=True)
+                
+                with col2:
+                    st.markdown(f"""
+                        <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
+                            <h4 style="color: white;">Risk Metrics</h4>
+                            <ul style="color: white; list-style-type: none; padding-left: 0;">
+                                <li>• P&L Volatility: ${perf_metrics['risk_metrics']['pnl_volatility']:.2f}</li>
+                                <li>• Sharpe Ratio: {perf_metrics['risk_metrics']['sharpe_ratio']:.2f}</li>
+                                <li>• Kelly Criterion: {perf_metrics['risk_metrics']['kelly_criterion']:.1%}</li>
+                            </ul>
+                        </div>
+                    """, unsafe_allow_html=True)
         
-        # Display Monte Carlo specific visualizations if selected
-        if model_type == "Monte Carlo":
-            st.subheader("Monte Carlo Simulation Paths")
-            fig = plt.figure(figsize=(10, 6))
-            plt.plot(np.linspace(0, time_to_maturity, n_steps), call_paths[:100].T, alpha=0.1)
-            plt.plot(np.linspace(0, time_to_maturity, n_steps), np.mean(call_paths, axis=0),
-                    'r', linewidth=2)
-            plt.xlabel('Time (years)')
-            plt.ylabel('Stock Price')
-            plt.title('Monte Carlo Simulation Paths (first 100 paths)')
-            st.pyplot(fig)
-        
-        # Display testing section if enabled
-        if st.sidebar.checkbox("Enable Model Testing", False):
-            st.sidebar.markdown("## Model Testing")
-            if st.sidebar.button("Run Model Tests"):
-                with st.spinner("Running model tests..."):
-                    test_results = run_all_tests()
-                    
-                    if test_results['all_passed']:
-                        st.success("All model tests passed successfully!")
+        with quant_tab:
+            st.subheader("Quantitative Analysis")
+            st.info("Select a quant tool to perform advanced analysis")
+            
+            quant_tool = st.selectbox(
+                "Select Quantitative Tool",
+                ["Implied Volatility", "Local Volatility Surface", "Value at Risk (VaR)", "Risk Scenario Analysis"]
+            )
+            
+            if quant_tool == "Implied Volatility":
+                st.subheader("Implied Volatility Calculator")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    market_price = st.number_input("Market Option Price", value=5.0, step=0.1)
+                    option_type = st.selectbox("Option Type", ["call", "put"])
+                
+                with col2:
+                    initial_guess = st.slider("Initial Volatility Guess", 0.1, 1.0, 0.2, 0.05)
+                
+                if st.button("Calculate Implied Volatility"):
+                    try:
+                        iv = implied_volatility(
+                            market_price, current_price, strike_price, time_to_maturity,
+                            risk_free_rate, option_type, initial_guess
+                        )
                         
-                        # Display detailed results in expandable sections
-                        with st.expander("Black-Scholes Test Results"):
-                            for i, result in enumerate(test_results['black_scholes']):
-                                st.write(f"Test Case {i+1}:")
-                                st.write(f"Parameters: {result['parameters']}")
-                                st.write(f"Call Price: ${result['call_price']:.4f}")
-                                st.write(f"Put Price: ${result['put_price']:.4f}")
-                                st.write(f"Put-Call Parity Check: {'✓' if result['parity_check'] else '✗'}")
-                                st.write("---")
+                        st.success(f"Implied Volatility: {iv:.2%}")
                         
-                        with st.expander("Binomial Model Test Results"):
-                            for i, result in enumerate(test_results['binomial']):
-                                st.write(f"Test Case {i+1}:")
-                                st.write(f"Parameters: {result['parameters']}")
-                                st.write(f"European Call: ${result['european_call']:.4f}")
-                                st.write(f"European Put: ${result['european_put']:.4f}")
-                                st.write(f"American Call: ${result['american_call']:.4f}")
-                                st.write(f"American Put: ${result['american_put']:.4f}")
-                                st.write(f"Early Exercise Premium (Call): ${result['early_exercise_call']:.4f}")
-                                st.write(f"Early Exercise Premium (Put): ${result['early_exercise_put']:.4f}")
-                                st.write(f"Validity Check: {'✓' if result['validity_check'] else '✗'}")
-                                st.write("---")
+                        # Display implied vol vs current vol
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("Implied Volatility", f"{iv:.2%}", f"{(iv-volatility)/volatility:.2%}")
                         
-                        with st.expander("Monte Carlo Test Results"):
-                            for i, result in enumerate(test_results['monte_carlo']):
-                                st.write(f"Test Case {i+1}:")
-                                st.write(f"Parameters: {result['parameters']}")
-                                st.write(f"Monte Carlo Call: ${result['monte_carlo_call']:.4f}")
-                                st.write(f"Monte Carlo Put: ${result['monte_carlo_put']:.4f}")
-                                st.write(f"Call Standard Error: ${result['call_std_error']:.4f}")
-                                st.write(f"Put Standard Error: ${result['put_std_error']:.4f}")
-                                st.write(f"Black-Scholes Comparison:")
-                                st.write(f"  - Call Relative Error: {result['relative_error_call']:.2%}")
-                                st.write(f"  - Put Relative Error: {result['relative_error_put']:.2%}")
-                                st.write(f"Accuracy Check: {'✓' if result['accuracy_check'] else '✗'}")
-                                st.write("---")
-                    else:
-                        st.error(f"Model tests failed: {test_results.get('error', 'Unknown error')}")
-        
-        # Display footnotes and assumptions
-        display_footnotes()
-        
+                        with col2:
+                            st.metric("Model Volatility", f"{volatility:.2%}")
+                    except Exception as iv_error:
+                        st.error(f"Error calculating implied volatility: {str(iv_error)}")
+            
+            elif quant_tool == "Local Volatility Surface":
+                st.subheader("Local Volatility Surface Generator")
+                st.warning("Using simulated volatility surface data for demonstration")
+                
+                # Create simulated volatility surface data
+                strike_pcts = np.array([0.8, 0.9, 0.95, 1.0, 1.05, 1.1, 1.2])
+                maturities = np.array([1/12, 2/12, 3/12, 6/12, 1.0])
+                
+                strikes = current_price * strike_pcts
+                
+                # Create a volatility smile/skew
+                implied_vols = np.zeros((len(maturities), len(strikes)))
+                for i, t in enumerate(maturities):
+                    for j, k in enumerate(strike_pcts):
+                        # Simple volatility skew model
+                        skew = 0.15 * (1.0 - k) + 0.05 * np.sqrt(t)
+                        implied_vols[i, j] = max(0.1, volatility + skew)
+                
+                # Generate the local volatility surface
+                local_vols = local_volatility_surface(strikes, maturities, implied_vols, current_price, risk_free_rate)
+                
+                # Display the volatility surfaces
+                st.subheader("Volatility Surfaces")
+                
+                # Create grid for visualization
+                K_grid, T_grid = np.meshgrid(strike_pcts, maturities)
+                
+                fig = plt.figure(figsize=(12, 10))
+                
+                # Plot implied volatility surface
+                ax1 = fig.add_subplot(211, projection='3d')
+                surf1 = ax1.plot_surface(K_grid, T_grid, implied_vols, cmap='viridis', alpha=0.8)
+                ax1.set_xlabel('Moneyness (K/S)')
+                ax1.set_ylabel('Maturity (Years)')
+                ax1.set_zlabel('Implied Volatility')
+                ax1.set_title('Implied Volatility Surface')
+                fig.colorbar(surf1, ax=ax1, shrink=0.5, aspect=5)
+                
+                # Plot local volatility surface
+                ax2 = fig.add_subplot(212, projection='3d')
+                surf2 = ax2.plot_surface(K_grid, T_grid, local_vols, cmap='plasma', alpha=0.8)
+                ax2.set_xlabel('Moneyness (K/S)')
+                ax2.set_ylabel('Maturity (Years)')
+                ax2.set_zlabel('Local Volatility')
+                ax2.set_title('Local Volatility Surface (Dupire)')
+                fig.colorbar(surf2, ax=ax2, shrink=0.5, aspect=5)
+                
+                plt.tight_layout()
+                st.pyplot(fig)
+            
+            elif quant_tool == "Value at Risk (VaR)":
+                st.subheader("Value at Risk Calculator")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    confidence = st.slider("Confidence Level", 0.9, 0.99, 0.95, 0.01)
+                    horizon = st.slider("Risk Horizon (days)", 1, 30, 1) / 252  # Convert to years
+                
+                with col2:
+                    n_simulations = st.slider("Number of Simulations", 1000, 100000, 10000, 1000)
+                    strategy_type = st.selectbox("Position Type", ["Long Call", "Long Put", "Covered Call Writing", "Protective Put"])
+                
+                if st.button("Calculate VaR"):
+                    with st.spinner("Running VaR simulation..."):
+                        var_results = var_calculator(
+                            strategies=[strategy_type],
+                            quantities=[1],
+                            spot_price=current_price,
+                            strikes=[strike_price],
+                            maturities=[time_to_maturity],
+                            rates=risk_free_rate,
+                            vols=volatility,
+                            confidence=confidence,
+                            horizon=horizon,
+                            n_simulations=n_simulations
+                        )
+                        
+                        # Display VaR results
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown(f"""
+                                <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
+                                    <h4 style="color: white;">Value-at-Risk</h4>
+                                    <ul style="color: white; list-style-type: none; padding-left: 0;">
+                                        <li>• VaR ({confidence*100:.1f}%): ${var_results['VaR']:.2f}</li>
+                                        <li>• Expected Shortfall: ${var_results['Expected_Shortfall']:.2f}</li>
+                                        <li>• Horizon: {var_results['Horizon_Days']:.0f} day(s)</li>
+                                        <li>• Worst Case: ${var_results['Worst_Case']:.2f}</li>
+                                        <li>• Best Case: ${var_results['Best_Case']:.2f}</li>
+                                    </ul>
+                                </div>
+                            """, unsafe_allow_html=True)
+                        
+                        with col2:
+                            st.markdown(f"""
+                                <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
+                                    <h4 style="color: white;">Risk Distribution</h4>
+                                    <ul style="color: white; list-style-type: none; padding-left: 0;">
+                                        <li>• Volatility: ${var_results['Volatility']:.2f}</li>
+                                        <li>• Skewness: {var_results['Skewness']:.2f}</li>
+                                        <li>• Kurtosis: {var_results['Kurtosis']:.2f}</li>
+                                    </ul>
+                                </div>
+                            """, unsafe_allow_html=True)
+            
+            elif quant_tool == "Risk Scenario Analysis":
+                st.subheader("Strategy Scenario Analysis")
+                
+                strategy_list = ["Long Call", "Long Put", "Covered Call Writing", "Protective Put",
+                              "Bull Call Spread", "Bear Put Spread", "Long Straddle", "Iron Condor"]
+                selected_strategy = st.selectbox("Select Strategy for Analysis", strategy_list)
+                
+                if st.button("Run Scenario Analysis"):
+                    with st.spinner("Running scenario analysis..."):
+                        risk_results = risk_scenario_analysis(
+                            selected_strategy, current_price, strike_price, time_to_maturity,
+                            risk_free_rate, volatility, calculate_strategy_pnl
+                        )
+                        
+                        # Display price impact
+                        st.subheader("Price Impact Scenarios")
+                        price_fig = plt.figure(figsize=(10, 5))
+                        bars = plt.bar(
+                            [f"{p:.0f}" for p in risk_results['price_impact']['scenarios']],
+                            risk_results['price_impact']['pnl'],
+                            color=['red' if x < 0 else 'green' for x in risk_results['price_impact']['pnl']]
+                        )
+                        plt.axhline(y=0, color='white', linestyle='-', alpha=0.3)
+                        plt.xlabel('Price Scenarios')
+                        plt.ylabel('P&L')
+                        plt.title('Price Impact on P&L')
+                        
+                        # Add values on top of bars
+                        for bar in bars:
+                            height = bar.get_height()
+                            plt.text(bar.get_x() + bar.get_width()/2., height,
+                                  f'${height:.2f}',
+                                  ha='center', va='bottom' if height > 0 else 'top',
+                                  color='white')
+                        
+                        st.pyplot(price_fig)
+                        
+                        # Display extreme scenarios
+                        st.subheader("Extreme Market Scenarios")
+                        st.markdown(f"""
+                            <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
+                                <h4 style="color: white;">Extreme Scenario P&L Impact</h4>
+                                <ul style="color: white; list-style-type: none; padding-left: 0;">
+                                    <li>• Market Crash (-20%): ${risk_results['extreme_scenarios']['market_crash']:.2f}</li>
+                                    <li>• Market Rally (+20%): ${risk_results['extreme_scenarios']['market_rally']:.2f}</li>
+                                    <li>• Volatility Explosion (2x): ${risk_results['extreme_scenarios']['vol_explosion']:.2f}</li>
+                                    <li>• Volatility Collapse (0.5x): ${risk_results['extreme_scenarios']['vol_collapse']:.2f}</li>
+                                </ul>
+                            </div>
+                        """, unsafe_allow_html=True)
+
     except Exception as e:
         st.error(f"An error occurred: {str(e)}")
         st.info("Please check your inputs and try again.")
-        if st.checkbox("Show detailed error trace"):
+        if st.checkbox("Show detailed error trace", key="show_error"):
             st.exception(e)
 
+# Run the application
 if __name__ == "__main__":
     main()
