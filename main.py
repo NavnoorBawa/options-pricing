@@ -1259,6 +1259,7 @@ def calculate_option_prices(model_type, current_price, strike_price, time_to_mat
 
 def main():
     """Main application execution flow"""
+    # Page Configuration - keep outside try block
     st.set_page_config(
         page_title="Options Pricing Models",
         page_icon="📊",
@@ -1266,7 +1267,7 @@ def main():
         initial_sidebar_state="expanded"
     )
 
-    # CSS Styles
+    # CSS Styles - can stay outside try block too
     st.markdown("""
         <style>
         .greek-card {
@@ -1281,13 +1282,28 @@ def main():
         </style>
     """, unsafe_allow_html=True)
 
+    # Author Section
+    st.markdown("""
+        <div style="background-color: #1E2124; padding: 15px; border-radius: 10px; width: fit-content; margin-bottom: 20px;">
+            <div style="color: #9CA3AF; font-size: 14px; margin-bottom: 8px;">Created by</div>
+            <div style="display: flex; align-items: center;">
+                <div style="margin-right: 15px;">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="40" height="40">
+                        <path fill="#0A66C2" d="M20.5 2h-17A1.5 1.5 0 002 3.5v17A1.5 1.5 0 003.5 22h17a1.5 1.5 0 001.5-1.5v-17A1.5 1.5 0 0020.5 2zM8 19H5v-9h3zM6.5 8.25A1.75 1.75 0 118.3 6.5a1.78 1.78 0 01-1.8 1.75zM19 19h-3v-4.74c0-1.42-.6-1.93-1.38-1.93A1.74 1.74 0 0013 14.19a.66.66 0 00.1.4V19h-3v-9h2.9v1.3a3.11 3.11 0 012.7-1.4c1.55 0 3.36.86 3.36 3.66z"></path>
+                    </svg>
+                </div>
+                <a href="https://www.linkedin.com/in/navnoorbawa/" target="_blank" style="color: white; text-decoration: none; font-size: 24px; font-weight: 500;">Navnoor Bawa</a>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+    
     try:
         # Setup sidebar and get parameters
         model_type, current_price, strike_price, time_to_maturity, volatility, risk_free_rate, model_params = setup_sidebar()
-
+        
         # Title and model selection display
         st.markdown(f"# 📈 {model_type} Option Pricing Model")
-
+        
         # Calculate prices based on selected model
         with st.spinner("Calculating prices..."):
             price_info, call_value, put_value, paths_data = calculate_option_prices(
@@ -1297,26 +1313,49 @@ def main():
 
         # Display option prices
         display_option_prices(price_info)
-
+        
         # Add tabs for different functionalities
         main_tab, strategy_tab, quant_tab = st.tabs(["Basic Analysis", "Strategy Analysis", "Quant Research"])
-
+        
         with main_tab:
             # Display Greeks
             calculated_greeks = calculate_greeks("Call", current_price, strike_price,
-                                                 time_to_maturity, risk_free_rate, volatility)
+                                             time_to_maturity, risk_free_rate, volatility)
             display_greeks(calculated_greeks)
-
+            
             # Display advanced Greeks if requested
             if st.checkbox("Show Advanced Greeks"):
                 advanced_greeks = calculate_advanced_greeks("Call", current_price, strike_price,
-                                                            time_to_maturity, risk_free_rate, volatility)
+                                                        time_to_maturity, risk_free_rate, volatility)
                 st.markdown("### Advanced Greeks")
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.write(advanced_greeks)
-
-            # Updated Monte Carlo visualization code block (corrected)
+                    st.markdown(f"""
+                        <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
+                            <h4 style="color: white;">Second-Order Greeks</h4>
+                            <ul style="color: white; list-style-type: none; padding-left: 0;">
+                                <li>• Vanna: {advanced_greeks['vanna']:.4f} (Delta-Vega Sensitivity)</li>
+                                <li>• Charm: {advanced_greeks['charm']:.4f} (Delta Decay)</li>
+                                <li>• Volga: {advanced_greeks['volga']:.4f} (Vega Convexity)</li>
+                                <li>• Veta: {advanced_greeks['veta']:.4f} (Vega Decay)</li>
+                            </ul>
+                        </div>
+                    """, unsafe_allow_html=True)
+                
+                with col2:
+                    st.markdown(f"""
+                        <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
+                            <h4 style="color: white;">Third-Order Greeks</h4>
+                            <ul style="color: white; list-style-type: none; padding-left: 0;">
+                                <li>• Speed: {advanced_greeks['speed']:.4f} (Delta Acceleration)</li>
+                                <li>• Zomma: {advanced_greeks['zomma']:.4f} (Gamma-Volga)</li>
+                                <li>• Color: {advanced_greeks['color']:.4f} (Gamma Decay)</li>
+                                <li>• Ultima: {advanced_greeks['ultima']:.4f} (Volga-Volga)</li>
+                            </ul>
+                        </div>
+                    """, unsafe_allow_html=True)
+            
+            # Display Monte Carlo specific visualizations if selected - Updated with correct implementation
             if model_type == "Monte Carlo" and paths_data:
                 call_paths, put_paths, n_steps = paths_data
 
@@ -1337,6 +1376,7 @@ def main():
                 plt.title('Monte Carlo Simulation Paths (first 100 paths)')
                 st.pyplot(fig)
 
+                # Added Value-at-Risk calculation option
                 if st.checkbox("Calculate Value-at-Risk"):
                     confidence = st.slider("Confidence Level", 0.9, 0.99, 0.95, 0.01)
                     horizon = st.slider("Risk Horizon (days)", 1, 30, 1) / 252
@@ -1378,63 +1418,99 @@ def main():
                                 </ul>
                             </div>
                         """, unsafe_allow_html=True)
-
+        
         with strategy_tab:
-            strategy_type = st.selectbox(
-                "Select Option Strategy",
-                ["Long Call", "Covered Call Writing", "Bull Call Spread", "Bear Call Spread",
-                 "Long Put", "Protective Put", "Bull Put Spread", "Bear Put Spread",
-                 "Long Straddle", "Short Straddle", "Iron Butterfly", "Iron Condor"]
-            )
+            # Define strategy categories
+            call_strategies = ["Covered Call Writing", "Long Call", "Bull Call Spread", "Bear Call Spread"]
+            put_strategies = ["Long Put", "Protective Put", "Bull Put Spread", "Bear Put Spread"]
+            combined_strategies = ["Long Straddle", "Short Straddle", "Iron Butterfly", "Iron Condor"]
             
-            # Generate price range for plotting
-            spot_range = np.linspace(current_price * 0.7, current_price * 1.3, 100)
+            st.title("Options Strategy Analysis")
             
-            # Calculate strategy P&L
-            pnl = calculate_strategy_pnl(
-                strategy_type, spot_range, current_price, strike_price,
-                time_to_maturity, risk_free_rate, volatility, call_value, put_value
-            )
-            
-            # Plot strategy P&L
-            fig_strategy = create_strategy_visualization(
-                strategy_type, spot_range, current_price, strike_price,
-                time_to_maturity, risk_free_rate, volatility, call_value, put_value
-            )
-            
-            st.pyplot(fig_strategy)
-            
-            # Calculate and display strategy Greeks
-            st.subheader("Strategy Risk Analysis")
-            strategy_greeks = calculate_strategy_greeks(
-                strategy_type, current_price, strike_price,
-                time_to_maturity, risk_free_rate, volatility
-            )
-            
-            col1, col2 = st.columns(2)
+            col1, col2 = st.columns([1, 2])
             with col1:
-                st.markdown("### Strategy Greeks")
-                for greek, value in strategy_greeks.items():
-                    st.markdown(f"**{greek.capitalize()}**: {value:.4f}")
-            
-            # Calculate comprehensive strategy performance metrics
-            performance = calculate_strategy_performance(
-                strategy_type, current_price, strike_price, time_to_maturity,
-                risk_free_rate, volatility, call_value, put_value
-            )
+                strategy_category = st.selectbox("Select Strategy Category",
+                                              ["Call Option Strategies", "Put Option Strategies", "Combined Strategies"],
+                                              key="strategy_category")
             
             with col2:
-                st.markdown("### Performance Metrics")
-                metrics = performance['profitability']
-                st.markdown(f"**Max Profit**: ${metrics['max_profit']:.2f}")
-                st.markdown(f"**Max Loss**: ${metrics['max_loss']:.2f}")
-                st.markdown(f"**Expected P&L**: ${metrics['expected_pnl']:.2f}")
-                st.markdown(f"**Profit Probability**: {metrics['profit_probability']*100:.1f}%")
-                st.markdown(f"**Risk/Reward Ratio**: {metrics['risk_reward_ratio']:.2f}")
+                if strategy_category == "Call Option Strategies":
+                    strategy = st.selectbox("Select Strategy", call_strategies, key="call_strategy")
+                elif strategy_category == "Put Option Strategies":
+                    strategy = st.selectbox("Select Strategy", put_strategies, key="put_strategy")
+                else:
+                    strategy = st.selectbox("Select Strategy", combined_strategies, key="combined_strategy")
             
-            if st.checkbox("Show Detailed Strategy Analysis"):
-                st.json(performance)
-
+            # Strategy explanation based on selection
+            strategy_explanations = {
+                "Covered Call Writing": "Own the stock and sell a call option. This strategy generates income but caps upside potential.",
+                "Long Call": "Purchase a call option to profit from upward price movements with limited risk.",
+                "Bull Call Spread": "Buy a lower strike call and sell a higher strike call. Reduces cost but caps profit potential.",
+                "Bear Call Spread": "Sell a lower strike call and buy a higher strike call. Generates income with limited risk.",
+                "Long Put": "Purchase a put option to profit from downward price movements with limited risk.",
+                "Protective Put": "Own the stock and buy a put option as insurance against downside risk.",
+                "Bull Put Spread": "Sell a higher strike put and buy a lower strike put. Generates income with limited risk.",
+                "Bear Put Spread": "Buy a higher strike put and sell a lower strike put. Reduces cost but caps profit potential.",
+                "Long Straddle": "Buy both a call and put at the same strike. Profit from large price movements in either direction.",
+                "Short Straddle": "Sell both a call and put at the same strike. Profit from low volatility and small price movements.",
+                "Iron Butterfly": "Combination of a bear call spread and bull put spread with the same middle strike.",
+                "Iron Condor": "Combination of a bear call spread and bull put spread with a gap between middle strikes."
+            }
+            
+            st.info(strategy_explanations.get(strategy, ""))
+            
+            # Visualize strategy
+            spot_range = np.linspace(current_price * 0.5, current_price * 1.5, 200)
+            fig_pnl = create_strategy_visualization(
+                strategy, spot_range, current_price, strike_price,
+                time_to_maturity, risk_free_rate, volatility, call_value, put_value
+            )
+            
+            st.pyplot(fig_pnl)
+            
+            # Display strategy greeks
+            st.subheader("Strategy Risk Profile")
+            calculated_greeks = calculate_strategy_greeks(
+                strategy, current_price, strike_price, time_to_maturity, risk_free_rate, volatility
+            )
+            display_greeks(calculated_greeks)
+            
+            # Calculate and display strategy performance metrics
+            if st.checkbox("Show Detailed Strategy Performance"):
+                perf_metrics = calculate_strategy_performance(
+                    strategy, current_price, strike_price, time_to_maturity,
+                    risk_free_rate, volatility, call_value, put_value
+                )
+                
+                st.subheader("Strategy Performance Metrics")
+                
+                # Profitability metrics
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"""
+                        <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
+                            <h4 style="color: white;">Profitability Metrics</h4>
+                            <ul style="color: white; list-style-type: none; padding-left: 0;">
+                                <li>• Max Profit: ${perf_metrics['profitability']['max_profit']:.2f}</li>
+                                <li>• Max Loss: ${perf_metrics['profitability']['max_loss']:.2f}</li>
+                                <li>• Risk-Reward Ratio: {perf_metrics['profitability']['risk_reward_ratio']:.2f}</li>
+                                <li>• Profit Probability: {perf_metrics['profitability']['profit_probability']:.1%}</li>
+                            </ul>
+                        </div>
+                    """, unsafe_allow_html=True)
+                
+                with col2:
+                    st.markdown(f"""
+                        <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
+                            <h4 style="color: white;">Risk Metrics</h4>
+                            <ul style="color: white; list-style-type: none; padding-left: 0;">
+                                <li>• P&L Volatility: ${perf_metrics['risk_metrics']['pnl_volatility']:.2f}</li>
+                                <li>• Sharpe Ratio: {perf_metrics['risk_metrics']['sharpe_ratio']:.2f}</li>
+                                <li>• Kelly Criterion: {perf_metrics['risk_metrics']['kelly_criterion']:.1%}</li>
+                            </ul>
+                        </div>
+                    """, unsafe_allow_html=True)
+        
         with quant_tab:
             st.subheader("Quantitative Analysis")
             st.info("Select a quant tool to perform advanced analysis")
@@ -1445,224 +1521,195 @@ def main():
             )
             
             if quant_tool == "Implied Volatility":
-                st.markdown("### Implied Volatility Calculator")
+                st.subheader("Implied Volatility Calculator")
                 
-                market_price = st.number_input("Market Option Price", value=call_value, step=0.01, format="%.2f")
-                option_type = st.radio("Option Type", ["call", "put"])
+                col1, col2 = st.columns(2)
+                with col1:
+                    market_price = st.number_input("Market Option Price", value=5.0, step=0.1)
+                    option_type = st.selectbox("Option Type", ["call", "put"])
+                
+                with col2:
+                    initial_guess = st.slider("Initial Volatility Guess", 0.1, 1.0, 0.2, 0.05)
                 
                 if st.button("Calculate Implied Volatility"):
                     try:
-                        iv = implied_volatility(market_price, current_price, strike_price,
-                                              time_to_maturity, risk_free_rate, option_type)
+                        iv = implied_volatility(
+                            market_price, current_price, strike_price, time_to_maturity,
+                            risk_free_rate, option_type, initial_guess
+                        )
                         
-                        st.success(f"Implied Volatility: {iv*100:.2f}%")
+                        st.success(f"Implied Volatility: {iv:.2%}")
                         
-                        # Compare to input volatility
-                        diff = (iv - volatility) / volatility * 100
-                        if abs(diff) > 5:
-                            st.warning(f"Implied volatility differs from input by {diff:.1f}%")
-                    except Exception as e:
-                        st.error(f"Error calculating implied volatility: {str(e)}")
-                
+                        # Display implied vol vs current vol
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("Implied Volatility", f"{iv:.2%}", f"{(iv-volatility)/volatility:.2%}")
+                        
+                        with col2:
+                            st.metric("Model Volatility", f"{volatility:.2%}")
+                    except Exception as iv_error:
+                        st.error(f"Error calculating implied volatility: {str(iv_error)}")
+            
             elif quant_tool == "Local Volatility Surface":
-                st.markdown("### Local Volatility Surface")
+                st.subheader("Local Volatility Surface Generator")
+                st.warning("Using simulated volatility surface data for demonstration")
                 
-                # Define strike and maturity ranges
-                num_strikes = st.slider("Number of Strikes", 5, 15, 10)
-                num_maturities = st.slider("Number of Maturities", 5, 15, 8)
+                # Create simulated volatility surface data
+                strike_pcts = np.array([0.8, 0.9, 0.95, 1.0, 1.05, 1.1, 1.2])
+                maturities = np.array([1/12, 2/12, 3/12, 6/12, 1.0])
                 
-                strike_range = np.linspace(current_price * 0.7, current_price * 1.3, num_strikes)
-                maturity_range = np.linspace(0.1, 2.0, num_maturities)
+                strikes = current_price * strike_pcts
                 
-                # Generate implied volatility surface with skew
-                skew_factor = st.slider("Volatility Skew", -0.5, 0.5, -0.2, 0.05)
-                term_structure = st.slider("Term Structure Slope", -0.2, 0.2, 0.1, 0.05)
+                # Create a volatility smile/skew
+                implied_vols = np.zeros((len(maturities), len(strikes)))
+                for i, t in enumerate(maturities):
+                    for j, k in enumerate(strike_pcts):
+                        # Simple volatility skew model
+                        skew = 0.15 * (1.0 - k) + 0.05 * np.sqrt(t)
+                        implied_vols[i, j] = max(0.1, volatility + skew)
                 
-                iv_surface = np.zeros((len(maturity_range), len(strike_range)))
-                for i, t in enumerate(maturity_range):
-                    for j, k in enumerate(strike_range):
-                        moneyness = np.log(k / current_price)
-                        iv_surface[i, j] = volatility * (1 + skew_factor * moneyness + term_structure * (t - time_to_maturity))
+                # Generate the local volatility surface
+                local_vols = local_volatility_surface(strikes, maturities, implied_vols, current_price, risk_free_rate)
                 
-                # Calculate local volatility
-                local_vol = local_volatility_surface(strike_range, maturity_range, iv_surface, current_price, risk_free_rate)
+                # Display the volatility surfaces
+                st.subheader("Volatility Surfaces")
                 
-                # Plot surfaces
+                # Create grid for visualization
+                K_grid, T_grid = np.meshgrid(strike_pcts, maturities)
+                
                 fig = plt.figure(figsize=(12, 10))
-                
-                # Create 3D grid for plotting
-                K, T = np.meshgrid(strike_range, maturity_range)
                 
                 # Plot implied volatility surface
                 ax1 = fig.add_subplot(211, projection='3d')
-                surf1 = ax1.plot_surface(K, T, iv_surface, cmap='viridis', alpha=0.8)
-                ax1.set_xlabel('Strike')
-                ax1.set_ylabel('Maturity')
+                surf1 = ax1.plot_surface(K_grid, T_grid, implied_vols, cmap='viridis', alpha=0.8)
+                ax1.set_xlabel('Moneyness (K/S)')
+                ax1.set_ylabel('Maturity (Years)')
                 ax1.set_zlabel('Implied Volatility')
                 ax1.set_title('Implied Volatility Surface')
                 fig.colorbar(surf1, ax=ax1, shrink=0.5, aspect=5)
                 
                 # Plot local volatility surface
                 ax2 = fig.add_subplot(212, projection='3d')
-                surf2 = ax2.plot_surface(K, T, local_vol, cmap='plasma', alpha=0.8)
-                ax2.set_xlabel('Strike')
-                ax2.set_ylabel('Maturity')
+                surf2 = ax2.plot_surface(K_grid, T_grid, local_vols, cmap='plasma', alpha=0.8)
+                ax2.set_xlabel('Moneyness (K/S)')
+                ax2.set_ylabel('Maturity (Years)')
                 ax2.set_zlabel('Local Volatility')
-                ax2.set_title('Local Volatility Surface')
+                ax2.set_title('Local Volatility Surface (Dupire)')
                 fig.colorbar(surf2, ax=ax2, shrink=0.5, aspect=5)
                 
                 plt.tight_layout()
                 st.pyplot(fig)
-                
+            
             elif quant_tool == "Value at Risk (VaR)":
-                st.markdown("### Portfolio Value at Risk")
+                st.subheader("Value at Risk Calculator")
                 
-                # Define portfolio composition
-                st.subheader("Portfolio Composition")
+                col1, col2 = st.columns(2)
+                with col1:
+                    confidence = st.slider("Confidence Level", 0.9, 0.99, 0.95, 0.01)
+                    horizon = st.slider("Risk Horizon (days)", 1, 30, 1) / 252  # Convert to years
                 
-                num_positions = st.slider("Number of Positions", 1, 5, 3)
+                with col2:
+                    n_simulations = st.slider("Number of Simulations", 1000, 100000, 10000, 1000)
+                    strategy_type = st.selectbox("Position Type", ["Long Call", "Long Put", "Covered Call Writing", "Protective Put"])
                 
-                strategies = []
-                quantities = []
-                strikes = []
-                maturities = []
-                
-                for i in range(num_positions):
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        strategies.append(st.selectbox(f"Strategy {i+1}",
-                                                      ["Long Call", "Long Put", "Covered Call Writing", "Protective Put"],
-                                                      key=f"strat_{i}"))
-                        quantities.append(st.number_input(f"Quantity {i+1}", value=1, step=1, key=f"qty_{i}"))
-                    
-                    with col2:
-                        strikes.append(st.number_input(f"Strike {i+1}", value=strike_price*(0.9+i*0.1),
-                                                     step=1.0, key=f"strike_{i}"))
-                        maturities.append(st.number_input(f"Maturity {i+1} (years)", value=time_to_maturity*(0.8+i*0.4),
-                                                        min_value=0.01, step=0.1, key=f"mat_{i}"))
-                
-                # VaR parameters
-                st.subheader("VaR Parameters")
-                confidence = st.slider("Confidence Level", 0.9, 0.99, 0.95, 0.01)
-                horizon = st.slider("Risk Horizon (days)", 1, 30, 5) / 252
-                n_simulations = st.slider("Number of Simulations", 1000, 50000, 10000, 1000)
-                
-                if st.button("Calculate Portfolio VaR"):
-                    # Calculate portfolio VaR
-                    var_results = var_calculator(
-                        strategies=strategies,
-                        quantities=quantities,
-                        spot_price=current_price,
-                        strikes=strikes,
-                        maturities=maturities,
-                        rates=risk_free_rate,
-                        vols=volatility,
-                        confidence=confidence,
-                        horizon=horizon,
-                        n_simulations=n_simulations
-                    )
-                    
-                    # Display results
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.markdown(f"""
-                            <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
-                                <h4 style="color: white;">Value-at-Risk Results</h4>
-                                <ul style="color: white; list-style-type: none; padding-left: 0;">
-                                    <li>• VaR ({confidence*100:.1f}%): ${var_results['VaR']:.2f}</li>
-                                    <li>• Expected Shortfall: ${var_results['Expected_Shortfall']:.2f}</li>
-                                    <li>• Worst Case Loss: ${var_results['Worst_Case']:.2f}</li>
-                                    <li>• Best Case Gain: ${var_results['Best_Case']:.2f}</li>
-                                </ul>
-                            </div>
-                        """, unsafe_allow_html=True)
-                    
-                    with col2:
-                        st.markdown(f"""
-                            <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
-                                <h4 style="color: white;">Risk Statistics</h4>
-                                <ul style="color: white; list-style-type: none; padding-left: 0;">
-                                    <li>• Volatility: ${var_results['Volatility']:.2f}</li>
-                                    <li>• Skewness: {var_results['Skewness']:.2f}</li>
-                                    <li>• Kurtosis: {var_results['Kurtosis']:.2f}</li>
-                                    <li>• Confidence: {var_results['Confidence_Level']*100:.1f}%</li>
-                                </ul>
-                            </div>
-                        """, unsafe_allow_html=True)
+                if st.button("Calculate VaR"):
+                    with st.spinner("Running VaR simulation..."):
+                        var_results = var_calculator(
+                            strategies=[strategy_type],
+                            quantities=[1],
+                            spot_price=current_price,
+                            strikes=[strike_price],
+                            maturities=[time_to_maturity],
+                            rates=risk_free_rate,
+                            vols=volatility,
+                            confidence=confidence,
+                            horizon=horizon,
+                            n_simulations=n_simulations
+                        )
+                        
+                        # Display VaR results
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown(f"""
+                                <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
+                                    <h4 style="color: white;">Value-at-Risk</h4>
+                                    <ul style="color: white; list-style-type: none; padding-left: 0;">
+                                        <li>• VaR ({confidence*100:.1f}%): ${var_results['VaR']:.2f}</li>
+                                        <li>• Expected Shortfall: ${var_results['Expected_Shortfall']:.2f}</li>
+                                        <li>• Horizon: {var_results['Horizon_Days']:.0f} day(s)</li>
+                                        <li>• Worst Case: ${var_results['Worst_Case']:.2f}</li>
+                                        <li>• Best Case: ${var_results['Best_Case']:.2f}</li>
+                                    </ul>
+                                </div>
+                            """, unsafe_allow_html=True)
+                        
+                        with col2:
+                            st.markdown(f"""
+                                <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
+                                    <h4 style="color: white;">Risk Distribution</h4>
+                                    <ul style="color: white; list-style-type: none; padding-left: 0;">
+                                        <li>• Volatility: ${var_results['Volatility']:.2f}</li>
+                                        <li>• Skewness: {var_results['Skewness']:.2f}</li>
+                                        <li>• Kurtosis: {var_results['Kurtosis']:.2f}</li>
+                                    </ul>
+                                </div>
+                            """, unsafe_allow_html=True)
             
             elif quant_tool == "Risk Scenario Analysis":
-                st.markdown("### Risk Scenario Analysis")
+                st.subheader("Strategy Scenario Analysis")
                 
-                strategy_type = st.selectbox(
-                    "Select Strategy for Scenario Analysis",
-                    ["Long Call", "Long Put", "Bull Call Spread", "Bear Put Spread",
-                     "Long Straddle", "Iron Condor"]
-                )
+                strategy_list = ["Long Call", "Long Put", "Covered Call Writing", "Protective Put",
+                              "Bull Call Spread", "Bear Put Spread", "Long Straddle", "Iron Condor"]
+                selected_strategy = st.selectbox("Select Strategy for Analysis", strategy_list)
                 
                 if st.button("Run Scenario Analysis"):
-                    # Run scenario analysis
-                    scenarios = risk_scenario_analysis(
-                        strategy_type, current_price, strike_price, time_to_maturity,
-                        risk_free_rate, volatility, calculate_strategy_pnl
-                    )
-                    
-                    # Price impact chart
-                    st.subheader("Price Impact Scenarios")
-                    price_fig = plt.figure(figsize=(10, 6))
-                    plt.plot(scenarios['price_impact']['scenarios'],
-                            scenarios['price_impact']['pnl'], 'b-o', linewidth=2)
-                    plt.axhline(y=0, color='r', linestyle='--', alpha=0.6)
-                    plt.axvline(x=current_price, color='green', linestyle=':', alpha=0.6)
-                    plt.grid(True, alpha=0.3)
-                    plt.xlabel('Stock Price')
-                    plt.ylabel('P&L')
-                    plt.title('P&L Impact from Price Changes')
-                    st.pyplot(price_fig)
-                    
-                    # Volatility impact chart
-                    st.subheader("Volatility Impact Scenarios")
-                    vol_fig = plt.figure(figsize=(10, 6))
-                    plt.plot(scenarios['vol_impact']['scenarios']*100,
-                            scenarios['vol_impact']['pnl'], 'r-o', linewidth=2)
-                    plt.axhline(y=0, color='b', linestyle='--', alpha=0.6)
-                    plt.axvline(x=volatility*100, color='green', linestyle=':', alpha=0.6)
-                    plt.grid(True, alpha=0.3)
-                    plt.xlabel('Volatility (%)')
-                    plt.ylabel('P&L')
-                    plt.title('P&L Impact from Volatility Changes')
-                    st.pyplot(vol_fig)
-                    
-                    # Time decay chart
-                    st.subheader("Time Decay Impact")
-                    time_fig = plt.figure(figsize=(10, 6))
-                    plt.plot(scenarios['time_decay']['scenarios']*252,
-                            scenarios['time_decay']['pnl'], 'g-o', linewidth=2)
-                    plt.grid(True, alpha=0.3)
-                    plt.xlabel('Days to Expiration')
-                    plt.ylabel('P&L')
-                    plt.title('Time Decay Impact')
-                    st.pyplot(time_fig)
-                    
-                    # Extreme scenarios
-                    st.subheader("Extreme Scenario Analysis")
-                    extreme_data = scenarios['extreme_scenarios']
-                    
-                    st.markdown(f"""
-                        <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
-                            <h4 style="color: white;">Extreme Scenarios</h4>
-                            <ul style="color: white; list-style-type: none; padding-left: 0;">
-                                <li>• Market Crash (-20%): ${extreme_data['market_crash']:.2f}</li>
-                                <li>• Market Rally (+20%): ${extreme_data['market_rally']:.2f}</li>
-                                <li>• Volatility Explosion (2x): ${extreme_data['vol_explosion']:.2f}</li>
-                                <li>• Volatility Collapse (0.5x): ${extreme_data['vol_collapse']:.2f}</li>
-                            </ul>
-                        </div>
-                    """, unsafe_allow_html=True)
-    
+                    with st.spinner("Running scenario analysis..."):
+                        risk_results = risk_scenario_analysis(
+                            selected_strategy, current_price, strike_price, time_to_maturity,
+                            risk_free_rate, volatility, calculate_strategy_pnl
+                        )
+                        
+                        # Display price impact
+                        st.subheader("Price Impact Scenarios")
+                        price_fig = plt.figure(figsize=(10, 5))
+                        bars = plt.bar(
+                            [f"{p:.0f}" for p in risk_results['price_impact']['scenarios']],
+                            risk_results['price_impact']['pnl'],
+                            color=['red' if x < 0 else 'green' for x in risk_results['price_impact']['pnl']]
+                        )
+                        plt.axhline(y=0, color='white', linestyle='-', alpha=0.3)
+                        plt.xlabel('Price Scenarios')
+                        plt.ylabel('P&L')
+                        plt.title('Price Impact on P&L')
+                        
+                        # Add values on top of bars
+                        for bar in bars:
+                            height = bar.get_height()
+                            plt.text(bar.get_x() + bar.get_width()/2., height,
+                                  f'${height:.2f}',
+                                  ha='center', va='bottom' if height > 0 else 'top',
+                                  color='white')
+                        
+                        st.pyplot(price_fig)
+                        
+                        # Display extreme scenarios
+                        st.subheader("Extreme Market Scenarios")
+                        st.markdown(f"""
+                            <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
+                                <h4 style="color: white;">Extreme Scenario P&L Impact</h4>
+                                <ul style="color: white; list-style-type: none; padding-left: 0;">
+                                    <li>• Market Crash (-20%): ${risk_results['extreme_scenarios']['market_crash']:.2f}</li>
+                                    <li>• Market Rally (+20%): ${risk_results['extreme_scenarios']['market_rally']:.2f}</li>
+                                    <li>• Volatility Explosion (2x): ${risk_results['extreme_scenarios']['vol_explosion']:.2f}</li>
+                                    <li>• Volatility Collapse (0.5x): ${risk_results['extreme_scenarios']['vol_collapse']:.2f}</li>
+                                </ul>
+                            </div>
+                        """, unsafe_allow_html=True)
+
     except Exception as e:
         st.error(f"An error occurred: {str(e)}")
-        if st.checkbox("Show detailed error trace"):
+        st.info("Please check your inputs and try again.")
+        if st.checkbox("Show detailed error trace", key="show_error"):
             st.exception(e)
-
 if __name__ == "__main__":
     main()
