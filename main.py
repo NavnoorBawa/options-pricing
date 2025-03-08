@@ -327,54 +327,34 @@ def calculate_advanced_greeks(option_type, S, K, T, r, sigma):
 
 # Calculate Option Strategy Payoffs
 def calculate_strategy_pnl(strategy_type, spot_range, current_price, strike_price, time_to_maturity, risk_free_rate, volatility, call_value=0, put_value=0):
-    """
-    Calculate P&L for option strategies based on precise mathematical formulas
-    
-    Parameters:
-    -----------
-    strategy_type : str
-        Type of option strategy
-    spot_range : array
-        Range of spot prices for calculation
-    current_price : float
-        Current price of underlying
-    strike_price : float
-        Strike price
-    time_to_maturity : float
-        Time to expiration in years
-    risk_free_rate : float
-        Risk-free interest rate (decimal)
-    volatility : float
-        Volatility (decimal)
-    call_value, put_value : float
-        Current option values (prices)
-        
-    Returns:
-    --------
-    array: P&L values for each spot price in the range
-    """
+    """Calculate P&L for option strategies based on precise mathematical formulas"""
     # Validate inputs
     if not isinstance(spot_range, (list, np.ndarray)):
         raise ValueError("spot_range must be a list or numpy array")
         
+    # Add validation for numerical inputs
+    for param in [current_price, strike_price, time_to_maturity, risk_free_rate, volatility]:
+        if not isinstance(param, (int, float)) or param < 0:
+            raise ValueError(f"Invalid parameter value: {param}")
+    
     # Define common strikes for spreads
     lower_strike = strike_price * 0.9
     upper_strike = strike_price * 1.1
     
-    # Additional strikes for Iron Condor
+    # Calculate strikes for Iron Condor
     very_lower_strike = lower_strike * 0.95
     very_upper_strike = upper_strike * 1.05
     
-    # Initialize P&L array
+    # Initialize PnL array - IMPORTANT: same length as spot_range
     pnl = np.zeros(len(spot_range))
     
-    # Calculate option values at entry if not provided
+    # Calculate option values at entry (for comparison in P&L)
     atm_call_value = call_value if call_value > 0 else black_scholes_calc(
         current_price, strike_price, time_to_maturity, risk_free_rate, volatility, 'call')
     atm_put_value = put_value if put_value > 0 else black_scholes_calc(
         current_price, strike_price, time_to_maturity, risk_free_rate, volatility, 'put')
     
-    # Pre-calculate option values at other strikes for spreads
+    # For spreads - pre-calculate option values at other strikes
     lower_call_value = black_scholes_calc(
         current_price, lower_strike, time_to_maturity, risk_free_rate, volatility, 'call')
     upper_call_value = black_scholes_calc(
@@ -384,14 +364,14 @@ def calculate_strategy_pnl(strategy_type, spot_range, current_price, strike_pric
     upper_put_value = black_scholes_calc(
         current_price, upper_strike, time_to_maturity, risk_free_rate, volatility, 'put')
     
-    # For Iron Condor additional values
+    # For Iron Condor
     very_lower_put_value = black_scholes_calc(
         current_price, very_lower_strike, time_to_maturity, risk_free_rate, volatility, 'put')
     very_upper_call_value = black_scholes_calc(
         current_price, very_upper_strike, time_to_maturity, risk_free_rate, volatility, 'call')
     
     for i, spot in enumerate(spot_range):
-        # Calculate payoff based on strategy
+        # Calculate Call Option Strategies
         if strategy_type == "Covered Call Writing":
             # (ST - S0) + C if ST ≤ K, (K - S0) + C if ST > K
             if spot <= strike_price:
@@ -413,6 +393,7 @@ def calculate_strategy_pnl(strategy_type, spot_range, current_price, strike_pric
             # Net Credit - max(0, ST - K1) + max(0, ST - K2)
             pnl[i] = (lower_call_value - upper_call_value) - max(0, spot - lower_strike) + max(0, spot - upper_strike)
             
+        # Calculate Put Option Strategies
         elif strategy_type == "Long Put":
             # max(0, K - ST) - P
             pnl[i] = max(0, strike_price - spot) - atm_put_value
@@ -431,6 +412,7 @@ def calculate_strategy_pnl(strategy_type, spot_range, current_price, strike_pric
             # max(0, K1 - ST) - max(0, K2 - ST) - Net Debit
             pnl[i] = max(0, upper_strike - spot) - max(0, lower_strike - spot) - (upper_put_value - lower_put_value)
             
+        # Calculate Combined Strategies
         elif strategy_type == "Long Straddle":
             # max(0, ST - K) + max(0, K - ST) - (C + P)
             pnl[i] = max(0, spot - strike_price) + max(0, strike_price - spot) - (atm_call_value + atm_put_value)
@@ -450,7 +432,12 @@ def calculate_strategy_pnl(strategy_type, spot_range, current_price, strike_pric
             # Net Credit - max(0, K1 - ST) + max(0, (K1 - Δ) - ST) - max(0, ST - K2) + max(0, ST - (K2 + Δ))
             net_credit = (upper_put_value - very_lower_put_value) + (lower_call_value - very_upper_call_value)
             pnl[i] = net_credit - max(0, upper_strike - spot) + max(0, very_lower_strike - spot) - max(0, spot - lower_strike) + max(0, spot - very_upper_strike)
+        
+        else:
+            # Default for unknown strategies
+            pnl[i] = max(0, spot - strike_price) - atm_call_value
     
+    # Make sure we return an array with exactly the same length as spot_range
     return pnl
 
 # Calculate Implied Volatility
