@@ -643,7 +643,7 @@ def var_calculator(strategies, quantities, spot_price, strikes, maturities, rate
     strikes = np.array(strikes)
     maturities = np.array(maturities)
     rates = np.array(rates) if isinstance(rates, (list, np.ndarray)) else np.ones(n_positions) * rates
-    vols = np.array(vols)
+    vols = np.array(vols) if isinstance(vols, (list, np.ndarray)) else np.ones(n_positions) * vols
     quantities = np.array(quantities)
     
     # Generate random price paths
