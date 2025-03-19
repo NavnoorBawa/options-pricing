@@ -1628,7 +1628,17 @@ def calculate_option_prices(model_type, current_price, strike_price, time_to_mat
 
 def main():
     """Main application execution flow"""
-    # Page Configuration - keep outside try block
+    # Import all necessary libraries at the top level
+    import numpy as np
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    from scipy.stats import norm
+    from scipy.interpolate import RectBivariateSpline, interp1d, SmoothBivariateSpline, Rbf, griddata
+    import warnings
+    import io
+    warnings.filterwarnings('ignore')
+    
+    # Page Configuration
     st.set_page_config(
         page_title="Options Pricing Models",
         page_icon="📊",
@@ -1636,7 +1646,7 @@ def main():
         initial_sidebar_state="expanded"
     )
 
-    # CSS Styles - can stay outside try block too
+    # CSS Styles
     st.markdown("""
         <style>
         .greek-card {
@@ -1724,7 +1734,7 @@ def main():
                         </div>
                     """, unsafe_allow_html=True)
             
-            # Display Monte Carlo specific visualizations if selected - Updated with correct implementation
+            # Display Monte Carlo specific visualizations if selected
             if model_type == "Monte Carlo" and paths_data:
                 call_paths, put_paths, n_steps = paths_data
 
@@ -1904,7 +1914,7 @@ def main():
                     try:
                         iv = implied_volatility(
                             market_price, current_price, strike_price, time_to_maturity,
-                            risk_free_rate, option_type, initial_guess
+                            risk_free_rate, option_type, precision=1e-8, max_iterations=20
                         )
                         
                         st.success(f"Implied Volatility: {iv:.2%}")
@@ -1920,10 +1930,6 @@ def main():
                         st.error(f"Error calculating implied volatility: {str(iv_error)}")
             
             elif quant_tool == "Local Volatility Surface":
-                # Import necessary libraries
-                import numpy as np
-                import pandas as pd
-                from scipy.interpolate import RectBivariateSpline
                 st.subheader("Local Volatility Surface Generator")
                 
                 # Introduction with theory
@@ -2068,10 +2074,6 @@ def main():
                             
                             elif data_source == "Upload Market Data" and uploaded_file is not None:
                                 # Process uploaded data
-                                import pandas as pd
-                                import io
-                                
-                                # Read CSV data
                                 market_data = pd.read_csv(uploaded_file)
                                 
                                 # Validate required columns
@@ -2104,8 +2106,6 @@ def main():
                                 if np.isnan(implied_vols).any():
                                     if interpolation_method == "Linear":
                                         # Simple linear interpolation for missing values
-                                        from scipy.interpolate import griddata
-                                        
                                         # Get coordinates of non-NaN values
                                         ii, jj = np.where(~np.isnan(implied_vols))
                                         known_points = np.column_stack([ii, jj])
@@ -2124,8 +2124,6 @@ def main():
                                     
                                     elif interpolation_method == "Cubic Spline":
                                         # More advanced spline interpolation
-                                        from scipy.interpolate import SmoothBivariateSpline
-                                        
                                         # Get coordinates of non-NaN values
                                         ii, jj = np.where(~np.isnan(implied_vols))
                                         known_values = implied_vols[~np.isnan(implied_vols)]
@@ -2142,8 +2140,6 @@ def main():
                                         implied_vols = spline(maturities, strikes)
                                         
                                     else:  # Thin Plate Spline
-                                        from scipy.interpolate import Rbf
-                                        
                                         # Get coordinates of non-NaN values
                                         ii, jj = np.where(~np.isnan(implied_vols))
                                         known_values = implied_vols[~np.isnan(implied_vols)]
@@ -2391,7 +2387,6 @@ def main():
                             st.subheader("Download Results")
                             
                             # Create Excel file with results
-                            import io
                             buffer = io.BytesIO()
                             
                             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
@@ -2557,5 +2552,6 @@ def main():
         st.info("Please check your inputs and try again.")
         if st.checkbox("Show detailed error trace", key="show_error"):
             st.exception(e)
+
 if __name__ == "__main__":
     main()
