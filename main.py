@@ -2425,7 +2425,7 @@ def main():
                                     
                                     st.download_button(
                                         label=f"Download {name} as CSV",
-                                        data=csv_buffer,
+                                        data=csv_buffer.getvalue().encode(), 
                                         file_name=f"{name.lower()}.csv",
                                         mime="text/csv",
                                         key=f"csv_{name}"
