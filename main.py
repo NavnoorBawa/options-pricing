@@ -9,6 +9,7 @@ import warnings
 from matplotlib.colors import LinearSegmentedColormap
 from scipy.optimize import minimize
 
+
 # Black-Scholes Option Pricing Model
 def black_scholes_calc(S, K, T, r, sigma, option_type='call'):
     """
@@ -1919,6 +1920,10 @@ def main():
                         st.error(f"Error calculating implied volatility: {str(iv_error)}")
             
             elif quant_tool == "Local Volatility Surface":
+                # Import necessary libraries
+                import numpy as np
+                import pandas as pd
+                from scipy.interpolate import RectBivariateSpline
                 st.subheader("Local Volatility Surface Generator")
                 
                 # Introduction with theory
