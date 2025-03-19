@@ -441,9 +441,39 @@ def calculate_strategy_pnl(strategy_type, spot_range, current_price, strike_pric
     return pnl
 
 # Calculate Implied Volatility
-def implied_volatility(market_price, S, K, T, r, option_type='call', initial_guess=0.2, precision=1e-8):
+#def implied_volatility(market_price, S, K, T, r, option_type='call', initial_guess=0.2, precision=1e-8):
+#    """
+#    Calculate implied volatility using optimization
+#    
+#    Parameters:
+#    -----------
+#    market_price : float
+#        Observed market price of the option
+#    S, K, T, r : float
+#        Stock price, strike price, time to maturity (years), risk-free rate
+#    option_type : str
+#        'call' or 'put'
+#    initial_guess : float
+#        Initial volatility estimate
+#    precision : float
+#        Convergence threshold
+#        
+#    Returns:
+#    --------
+#    float: Implied volatility value
+#    """
+#    def objective(sigma):
+#        price = black_scholes_calc(S, K, T, r, sigma, option_type)
+#        return abs(price - market_price)
+#    
+#    result = minimize(objective, initial_guess, method='L-BFGS-B', bounds=[(0.001, 5.0)])
+#    if result.success:
+#        return result.x[0]
+#    else:
+#        raise ValueError(f"Implied volatility calculation failed: {result.message}")
+def implied_volatility(market_price, S, K, T, r, option_type='call', precision=1e-8, max_iterations=10):
     """
-    Calculate implied volatility using optimization
+    Calculate implied volatility using analytical approximation and Newton-Raphson refinement
     
     Parameters:
     -----------
@@ -453,25 +483,71 @@ def implied_volatility(market_price, S, K, T, r, option_type='call', initial_gue
         Stock price, strike price, time to maturity (years), risk-free rate
     option_type : str
         'call' or 'put'
-    initial_guess : float
-        Initial volatility estimate
     precision : float
         Convergence threshold
+    max_iterations : int
+        Maximum number of Newton-Raphson iterations
         
     Returns:
     --------
     float: Implied volatility value
     """
-    def objective(sigma):
-        price = black_scholes_calc(S, K, T, r, sigma, option_type)
-        return abs(price - market_price)
+    # Check if option is too far in/out of the money or nearly expired
+    if T <= 0.01:
+        return 0.3  # Default for very short-dated options
     
-    result = minimize(objective, initial_guess, method='L-BFGS-B', bounds=[(0.001, 5.0)])
-    if result.success:
-        return result.x[0]
+    # Calculate initial guess based on analytical approximation
+    if option_type.lower() == 'call':
+        intrinsic = max(0, S - K * np.exp(-r * T))
+    else:  # put
+        intrinsic = max(0, K * np.exp(-r * T) - S)
+    
+    # Time value
+    time_value = max(0.001, market_price - intrinsic)
+    
+    # Moneyness
+    moneyness = np.log(S / K) + r * T
+    
+    # Initial volatility guess using approximation
+    if abs(moneyness) < 0.2:  # Near ATM
+        # Brenner-Subrahmanyam approximation for near-ATM options
+        sigma = np.sqrt(2 * np.pi / T) * time_value / (S * np.exp(-r * T))
     else:
-        raise ValueError(f"Implied volatility calculation failed: {result.message}")
-
+        # For non-ATM options
+        sigma = np.sqrt(abs(2 * moneyness / T)) * time_value / (S * np.exp(-r * T))
+    
+    # Ensure initial guess is within bounds
+    sigma = max(0.001, min(sigma, 5.0))
+    
+    # Newton-Raphson refinement
+    for i in range(max_iterations):
+        # Calculate option price
+        price = black_scholes_calc(S, K, T, r, sigma, option_type)
+        
+        # Calculate difference
+        diff = price - market_price
+        
+        # Check convergence
+        if abs(diff) < precision:
+            return sigma
+        
+        # Calculate vega (derivative of price with respect to volatility)
+        d1 = (np.log(S/K) + (r + sigma**2/2)*T) / (sigma * np.sqrt(T))
+        vega = S * np.sqrt(T) * norm.pdf(d1)
+        
+        # Avoid division by zero
+        if abs(vega) < 1e-8:
+            vega = 1e-8
+        
+        # Newton-Raphson update
+        sigma = sigma - diff / vega
+        
+        # Ensure sigma stays within bounds
+        sigma = max(0.001, min(sigma, 5.0))
+    
+    # If we reached max iterations, return the best estimate we have
+    return sigma
+    
 # Calculate Strategy Greeks
 def calculate_strategy_greeks(strategy_type, spot_price, strike_price, time_to_maturity, risk_free_rate, volatility):
     """
