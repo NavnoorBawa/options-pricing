@@ -1093,9 +1093,11 @@ def create_strategy_visualization(strategy, spot_range, current_price, strike_pr
     return fig_pnl
 
 # Local Volatility Surface Calculation
-def local_volatility_surface(strikes, maturities, implied_vols, spot, rates):
+def enhanced_local_volatility_surface(strikes, maturities, implied_vols, spot, rates,
+                               dividend_yield=0.0, smoothing_level=0.1):
     """
-    Generate local volatility surface using Dupire's formula
+    Generate enhanced local volatility surface using Dupire's formula with proper mathematical 
+    formulation and numerical stability improvements
     
     Parameters:
     -----------
@@ -1107,56 +1109,283 @@ def local_volatility_surface(strikes, maturities, implied_vols, spot, rates):
         Matrix of implied volatilities for each strike/maturity pair
     spot : float
         Current spot price
-    rates : array-like
-        Risk-free rates for each maturity
-    
+    rates : array-like or float
+        Risk-free rates for each maturity or a single rate
+    dividend_yield : float or array-like
+        Continuous dividend yield(s)
+    smoothing_level : float
+        Controls smoothing of input data (0.0-1.0)
+        
     Returns:
     --------
-    local_vol_surface : 2D array
-        Matrix of local volatilities
+    tuple: (local_vol_surface, smoothed_implied_vols, diagnostics)
+        - local_vol_surface: Matrix of local volatilities
+        - smoothed_implied_vols: Matrix of smoothed implied volatilities
+        - diagnostics: Dictionary with diagnostic information
     """
-    # Create 2D grid
-    K_grid, T_grid = np.meshgrid(strikes, maturities)
-    local_vol = np.zeros_like(K_grid)
+    import numpy as np
+    from scipy.interpolate import RectBivariateSpline, interp1d
     
-    # Ensure implied_vols is a numpy array
-    implied_vols = np.array(implied_vols)
+    # Ensure inputs are numpy arrays
+    strikes = np.array(strikes, dtype=float)
+    maturities = np.array(maturities, dtype=float)
+    implied_vols = np.array(implied_vols, dtype=float)
     
-    # Calculate numerical derivatives for Dupire formula
-    for i, T in enumerate(maturities):
-        for j, K in enumerate(strikes):
-            if i == 0 or j == 0 or i == len(maturities)-1 or j == len(strikes)-1:
-                # Skip boundaries
-                local_vol[i, j] = implied_vols[i, j]
-                continue
-                
-            # Time derivative (dC/dT)
-            if i < len(maturities) - 1:
-                dT = maturities[i+1] - maturities[i-1]
-                dC_dT = (implied_vols[i+1, j] - implied_vols[i-1, j]) / dT
-            else:
-                dC_dT = 0
+    # Convert rates and dividend yield to arrays if they're scalars
+    if np.isscalar(rates):
+        rates = np.full_like(maturities, rates)
+    if np.isscalar(dividend_yield):
+        dividend_yield = np.full_like(maturities, dividend_yield)
+    
+    # Diagnostics container
+    diagnostics = {
+        'boundary_points': 0,
+        'denominator_fixes': 0,
+        'extreme_values_clipped': 0
+    }
+    
+    # 1. Smooth the implied volatility surface to reduce noise in derivatives
+    # Adjust smoothing factor based on user input
+    smoothing_factor = smoothing_level * (len(strikes) * len(maturities))
+    
+    # Create spline with appropriate smoothing
+    iv_spline = RectBivariateSpline(
+        maturities, strikes, implied_vols,
+        kx=min(3, len(maturities)-1),
+        ky=min(3, len(strikes)-1),
+        s=smoothing_factor
+    )
+    
+    # Create a denser grid for more accurate derivatives
+    dense_maturities = np.linspace(maturities.min(), maturities.max(), max(50, len(maturities)*2))
+    dense_strikes = np.linspace(strikes.min(), strikes.max(), max(50, len(strikes)*2))
+    
+    # Evaluate smoothed implied volatility on the dense grid
+    K_dense, T_dense = np.meshgrid(dense_strikes, dense_maturities)
+    smoothed_iv = iv_spline(dense_maturities, dense_strikes)
+    
+    # 2. Interpolate rates and dividends to match the dense grid
+    rate_interp = interp1d(maturities, rates, kind='linear', fill_value='extrapolate')
+    div_interp = interp1d(maturities, dividend_yield, kind='linear', fill_value='extrapolate')
+    
+    dense_rates = rate_interp(dense_maturities)
+    dense_dividends = div_interp(dense_maturities)
+    
+    # 3. Calculate option prices from implied volatilities
+    # This is critical - Dupire's formula applies to option prices, not volatilities directly
+    option_prices = np.zeros_like(smoothed_iv)
+    for i, t in enumerate(dense_maturities):
+        for j, k in enumerate(dense_strikes):
+            # Use Black-Scholes to get option prices from implied vols
+            option_prices[i, j] = black_scholes_calc(
+                spot, k, t, dense_rates[i] - dense_dividends[i], smoothed_iv[i, j], 'call'
+            )
+    
+    # 4. Calculate derivatives with proper boundary handling
+    # Initialize derivative arrays
+    dC_dT = np.zeros_like(option_prices)
+    dC_dK = np.zeros_like(option_prices)
+    d2C_dK2 = np.zeros_like(option_prices)
+    
+    # Time steps for finite difference calculations
+    dt_forward = np.diff(dense_maturities)
+    dt_backward = np.diff(dense_maturities, prepend=dense_maturities[0])
+    
+    # Strike steps
+    dk_forward = np.diff(dense_strikes)
+    dk_backward = np.diff(dense_strikes, prepend=dense_strikes[0])
+    
+    # Calculate time derivatives (dC/dT)
+    for j in range(len(dense_strikes)):
+        # Forward difference for first point
+        dC_dT[0, j] = (option_prices[1, j] - option_prices[0, j]) / dt_forward[0]
+        
+        # Central difference for interior points
+        for i in range(1, len(dense_maturities)-1):
+            dt_central = dense_maturities[i+1] - dense_maturities[i-1]
+            dC_dT[i, j] = (option_prices[i+1, j] - option_prices[i-1, j]) / dt_central
+        
+        # Backward difference for last point
+        last_idx = len(dense_maturities)-1
+        dC_dT[last_idx, j] = (option_prices[last_idx, j] - option_prices[last_idx-1, j]) / dt_backward[last_idx]
+    
+    # Calculate strike derivatives (dC/dK and d2C/dK2)
+    for i in range(len(dense_maturities)):
+        # Forward differences for first point
+        dC_dK[i, 0] = (option_prices[i, 1] - option_prices[i, 0]) / dk_forward[0]
+        d2C_dK2[i, 0] = (option_prices[i, 2] - 2*option_prices[i, 1] + option_prices[i, 0]) / (dk_forward[0]**2)
+        diagnostics['boundary_points'] += 1
+        
+        # Central differences for interior points
+        for j in range(1, len(dense_strikes)-1):
+            dk = dense_strikes[j+1] - dense_strikes[j-1]
+            dC_dK[i, j] = (option_prices[i, j+1] - option_prices[i, j-1]) / dk
+            d2C_dK2[i, j] = (option_prices[i, j+1] - 2*option_prices[i, j] + option_prices[i, j-1]) / ((dense_strikes[j+1] - dense_strikes[j-1])/2)**2
+        
+        # Backward differences for last point
+        last_idx = len(dense_strikes)-1
+        dC_dK[i, last_idx] = (option_prices[i, last_idx] - option_prices[i, last_idx-1]) / dk_backward[last_idx]
+        d2C_dK2[i, last_idx] = (option_prices[i, last_idx] - 2*option_prices[i, last_idx-1] + option_prices[i, last_idx-2]) / (dk_backward[last_idx]**2)
+        diagnostics['boundary_points'] += 1
+    
+    # 5. Apply Dupire's formula with robust numerical safeguards
+    local_vol = np.zeros_like(option_prices)
+    
+    for i in range(len(dense_maturities)):
+        for j in range(len(dense_strikes)):
+            # Extract parameters at this grid point
+            r = dense_rates[i]
+            q = dense_dividends[i]
+            K = dense_strikes[j]
+            T = dense_maturities[i]
             
-            # First strike derivative (dC/dK)
-            dK = strikes[j+1] - strikes[j-1]
-            dC_dK = (implied_vols[i, j+1] - implied_vols[i, j-1]) / dK
+            # Proper Dupire formula
+            # numerator = dC/dT + (r-q)*K*dC/dK + q*C
+            numerator = dC_dT[i, j] + (r - q) * K * dC_dK[i, j] + q * option_prices[i, j]
             
-            # Second strike derivative (d²C/dK²)
-            d2C_dK2 = (implied_vols[i, j+1] - 2*implied_vols[i, j] + implied_vols[i, j-1]) / ((dK/2)**2)
+            # denominator = 0.5 * K^2 * d2C/dK2
+            denominator = 0.5 * K**2 * d2C_dK2[i, j]
             
-            # Dupire's formula for local volatility
-            r = rates[i] if isinstance(rates, (list, np.ndarray)) else rates
-            iv = implied_vols[i, j]
-            
-            numerator = dC_dT + r*K*dC_dK
-            denominator = 0.5 * K**2 * d2C_dK2
-            
-            if denominator > 0:
+            # Apply robust numerical safeguards
+            if denominator > 1e-6 and numerator > 0:
                 local_vol[i, j] = np.sqrt(numerator / denominator)
             else:
-                local_vol[i, j] = iv  # Fallback to implied vol if denominator is non-positive
+                # Fallback to implied vol if formula gives invalid result
+                local_vol[i, j] = smoothed_iv[i, j]
+                diagnostics['denominator_fixes'] += 1
+            
+            # Apply reasonable bounds for stability
+            if not (0.01 <= local_vol[i, j] <= 2.0):
+                local_vol[i, j] = np.clip(local_vol[i, j], 0.01, 2.0)
+                diagnostics['extreme_values_clipped'] += 1
     
-    return local_vol
+    # 6. Smooth the output local volatility surface to remove artifacts
+    output_smoothing = smoothing_factor * 2  # More aggressive smoothing for output
+    local_vol_spline = RectBivariateSpline(
+        dense_maturities, dense_strikes, local_vol,
+        kx=min(3, len(dense_maturities)-1),
+        ky=min(3, len(dense_strikes)-1),
+        s=output_smoothing
+    )
+    
+    # 7. Interpolate back to the original grid points for consistency
+    result_local_vol = local_vol_spline(maturities, strikes)
+    result_implied_vol = iv_spline(maturities, strikes)
+    
+    # Add grid information to diagnostics
+    diagnostics['grid_info'] = {
+        'original_size': (len(maturities), len(strikes)),
+        'dense_size': (len(dense_maturities), len(dense_strikes)),
+        'smoothing_factor': smoothing_factor
+    }
+    
+    return result_local_vol, result_implied_vol, diagnostics
+
+def analyze_vol_surface(local_vols, implied_vols, strikes, maturities, spot_price):
+    """
+    Analyze local volatility surface to extract key quantitative features
+    
+    Parameters:
+    -----------
+    local_vols : 2D array
+        Local volatility surface
+    implied_vols : 2D array
+        Implied volatility surface
+    strikes : array
+        Strike prices
+    maturities : array
+        Maturity dates
+    spot_price : float
+        Current spot price
+        
+    Returns:
+    --------
+    dict: Analysis results
+    """
+    import numpy as np
+    
+    # Calculate moneyness for better comparisons
+    moneyness = np.array([k/spot_price for k in strikes])
+    
+    # Initialize results
+    results = {}
+    
+    # 1. Extract ATM volatility term structure
+    atm_index = np.argmin(np.abs(moneyness - 1.0))
+    results['atm_local_vol_term'] = local_vols[:, atm_index]
+    results['atm_implied_vol_term'] = implied_vols[:, atm_index]
+    
+    # 2. Analyze volatility skew at various maturities
+    skew_results = []
+    
+    # Select representative maturities for skew analysis
+    maturity_indices = []
+    if len(maturities) >= 3:
+        # Short, medium and long term
+        maturity_indices = [0, len(maturities)//2, len(maturities)-1]
+    else:
+        maturity_indices = list(range(len(maturities)))
+    
+    for idx in maturity_indices:
+        # Calculate skew as slope of volatility curve near ATM
+        if atm_index > 0 and atm_index < len(strikes) - 1:
+            local_skew = (local_vols[idx, atm_index+1] - local_vols[idx, atm_index-1]) / (moneyness[atm_index+1] - moneyness[atm_index-1])
+            implied_skew = (implied_vols[idx, atm_index+1] - implied_vols[idx, atm_index-1]) / (moneyness[atm_index+1] - moneyness[atm_index-1])
+        else:
+            # Handle boundary case
+            if atm_index == 0:
+                local_skew = (local_vols[idx, 1] - local_vols[idx, 0]) / (moneyness[1] - moneyness[0])
+                implied_skew = (implied_vols[idx, 1] - implied_vols[idx, 0]) / (moneyness[1] - moneyness[0])
+            else:
+                local_skew = (local_vols[idx, -1] - local_vols[idx, -2]) / (moneyness[-1] - moneyness[-2])
+                implied_skew = (implied_vols[idx, -1] - implied_vols[idx, -2]) / (moneyness[-1] - moneyness[-2])
+        
+        skew_results.append({
+            'maturity': maturities[idx],
+            'local_skew': local_skew,
+            'implied_skew': implied_skew
+        })
+    
+    results['skew_analysis'] = skew_results
+    
+    # 3. Volatility surface curvature (smile strength)
+    # Calculate for a middle-term maturity
+    mid_idx = len(maturities) // 2
+    
+    # Find OTM put, ATM, and OTM call volatilities
+    otm_put_idx = max(0, np.argmin(np.abs(moneyness - 0.9)))
+    otm_call_idx = min(len(moneyness)-1, np.argmin(np.abs(moneyness - 1.1)))
+    
+    # Calculate smile strength as average of deviations from ATM vol
+    local_smile = 0.5 * ((local_vols[mid_idx, otm_put_idx] - local_vols[mid_idx, atm_index]) +
+                         (local_vols[mid_idx, otm_call_idx] - local_vols[mid_idx, atm_index]))
+    
+    implied_smile = 0.5 * ((implied_vols[mid_idx, otm_put_idx] - implied_vols[mid_idx, atm_index]) +
+                           (implied_vols[mid_idx, otm_call_idx] - implied_vols[mid_idx, atm_index]))
+    
+    results['smile_strength'] = {
+        'local_vol_smile': local_smile,
+        'implied_vol_smile': implied_smile
+    }
+    
+    # 4. Implied vs local volatility differences
+    results['vol_comparison'] = {
+        'mean_diff': np.mean(local_vols - implied_vols),
+        'max_diff': np.max(local_vols - implied_vols),
+        'min_diff': np.min(local_vols - implied_vols),
+        'rms_diff': np.sqrt(np.mean((local_vols - implied_vols)**2))
+    }
+    
+    # 5. Surface stability assessment - higher values indicate potential numerical issues
+    local_vol_gradients = np.gradient(local_vols)
+    smoothness_metric = np.mean(np.abs(np.gradient(local_vol_gradients[0])) + np.abs(np.gradient(local_vol_gradients[1])))
+    
+    results['surface_stability'] = {
+        'smoothness_metric': smoothness_metric,
+        'stability_assessment': 'Good' if smoothness_metric < 0.05 else 'Moderate' if smoothness_metric < 0.1 else 'Poor'
+    }
+    
+    return results
 
 # Risk Scenario Analysis
 def risk_scenario_analysis(strategy, current_price, strike_price, time_to_maturity,
