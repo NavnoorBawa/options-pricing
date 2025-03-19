@@ -2383,59 +2383,72 @@ def main():
                                 
                                 st.dataframe(diag_df)
                             
-                            # Option to download data
-                            st.subheader("Download Results")
-                            
-                            # Create Excel file with results
-                            buffer = io.BytesIO()
-                            
-                            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                                # Metadata sheet
-                                metadata = pd.DataFrame([
-                                    {'Parameter': 'Spot Price', 'Value': current_price},
-                                    {'Parameter': 'Risk-Free Rate', 'Value': risk_free_rate},
-                                    {'Parameter': 'Dividend Yield', 'Value': dividend_yield},
-                                    {'Parameter': 'Smoothing Level', 'Value': smoothing_level}
-                                ])
-                                metadata.to_excel(writer, sheet_name='Parameters', index=False)
-                                
-                                # Volatility surfaces data
-                                strike_df = pd.DataFrame({'Strike': strikes, 'Moneyness': strikes/current_price})
-                                strike_df.to_excel(writer, sheet_name='Strikes', index=False)
-                                
-                                maturity_df = pd.DataFrame({'Maturity': maturities})
-                                maturity_df.to_excel(writer, sheet_name='Maturities', index=False)
-                                
-                                # Create DataFrames for volatility surfaces
-                                implied_vol_df = pd.DataFrame(
-                                    smoothed_ivs,
-                                    index=[f'T={t:.2f}' for t in maturities],
-                                    columns=[f'K={k:.1f}' for k in strikes]
-                                )
-                                implied_vol_df.to_excel(writer, sheet_name='ImpliedVolSurface')
-                                
-                                local_vol_df = pd.DataFrame(
-                                    local_vols,
-                                    index=[f'T={t:.2f}' for t in maturities],
-                                    columns=[f'K={k:.1f}' for k in strikes]
-                                )
-                                local_vol_df.to_excel(writer, sheet_name='LocalVolSurface')
-                                
-                                # Analysis results
-                                # ATM Term Structure
-                                atm_vol_df.to_excel(writer, sheet_name='ATM_TermStructure', index=False)
-                                
-                                # Skew Analysis
-                                skew_df.to_excel(writer, sheet_name='SkewAnalysis', index=False)
-                                
-                            buffer.seek(0)
-                            
-                            st.download_button(
-                                label="Download Excel with Volatility Surfaces",
-                                data=buffer,
-                                file_name="volatility_surfaces.xlsx",
-                                mime="application/vnd.ms-excel"
-                            )
+                                # Option to download data
+                                st.subheader("Download Results")
+
+                                try:
+                                    # Try to import xlsxwriter
+                                    import xlsxwriter
+                                    excel_export_available = True
+                                except ImportError:
+                                    excel_export_available = False
+
+                                # Create DataFrame collection for export
+                                export_data = {
+                                    'Parameters': pd.DataFrame([
+                                        {'Parameter': 'Spot Price', 'Value': current_price},
+                                        {'Parameter': 'Risk-Free Rate', 'Value': risk_free_rate},
+                                        {'Parameter': 'Dividend Yield', 'Value': dividend_yield},
+                                        {'Parameter': 'Smoothing Level', 'Value': smoothing_level}
+                                    ]),
+                                    'Strikes': pd.DataFrame({'Strike': strikes, 'Moneyness': strikes/current_price}),
+                                    'Maturities': pd.DataFrame({'Maturity': maturities}),
+                                    'ImpliedVolSurface': pd.DataFrame(
+                                        smoothed_ivs,
+                                        index=[f'T={t:.2f}' for t in maturities],
+                                        columns=[f'K={k:.1f}' for k in strikes]
+                                    ),
+                                    'LocalVolSurface': pd.DataFrame(
+                                        local_vols,
+                                        index=[f'T={t:.2f}' for t in maturities],
+                                        columns=[f'K={k:.1f}' for k in strikes]
+                                    ),
+                                    'ATM_TermStructure': atm_vol_df,
+                                    'SkewAnalysis': skew_df
+                                }
+
+                                # CSV export option (always available)
+                                for name, df in export_data.items():
+                                    csv_buffer = io.StringIO()
+                                    df.to_csv(csv_buffer)
+                                    csv_buffer.seek(0)
+                                    
+                                    st.download_button(
+                                        label=f"Download {name} as CSV",
+                                        data=csv_buffer,
+                                        file_name=f"{name.lower()}.csv",
+                                        mime="text/csv",
+                                        key=f"csv_{name}"
+                                    )
+
+                                # Excel export option (if xlsxwriter is available)
+                                if excel_export_available:
+                                    buffer = io.BytesIO()
+                                    
+                                    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                                        for name, df in export_data.items():
+                                            df.to_excel(writer, sheet_name=name, index=name in ['ImpliedVolSurface', 'LocalVolSurface'])
+                                    
+                                    buffer.seek(0)
+                                    
+                                    st.download_button(
+                                        label="Download All Data as Excel Workbook",
+                                        data=buffer,
+                                        file_name="volatility_surfaces.xlsx",
+                                        mime="application/vnd.ms-excel"
+                                    )
+                                else:
+                                    st.info("Excel export requires the xlsxwriter package. Use the CSV downloads above or install xlsxwriter with 'pip install xlsxwriter'.")
                             
                         except Exception as e:
                             st.error(f"Error calculating volatility surface: {str(e)}")
