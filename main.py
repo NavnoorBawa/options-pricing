@@ -471,9 +471,9 @@ def calculate_strategy_pnl(strategy_type, spot_range, current_price, strike_pric
 #        return result.x[0]
 #    else:
 #        raise ValueError(f"Implied volatility calculation failed: {result.message}")
-def implied_volatility(market_price, S, K, T, r, option_type='call', precision=1e-8, max_iterations=10):
+def implied_volatility(market_price, S, K, T, r, option_type='call', precision=1e-8, max_iterations=20):
     """
-    Calculate implied volatility using analytical approximation and Newton-Raphson refinement
+    Calculate implied volatility using enhanced analytical approximation and Newton-Raphson refinement
     
     Parameters:
     -----------
@@ -492,34 +492,76 @@ def implied_volatility(market_price, S, K, T, r, option_type='call', precision=1
     --------
     float: Implied volatility value
     """
-    # Check if option is too far in/out of the money or nearly expired
+    # Handle degenerate cases
     if T <= 0.01:
         return 0.3  # Default for very short-dated options
     
-    # Calculate initial guess based on analytical approximation
+    # Set a more reasonable minimum volatility floor
+    min_sigma = 0.05  # 5% minimum volatility
+    
+    # Calculate intrinsic value
     if option_type.lower() == 'call':
         intrinsic = max(0, S - K * np.exp(-r * T))
     else:  # put
         intrinsic = max(0, K * np.exp(-r * T) - S)
     
     # Time value
-    time_value = max(0.001, market_price - intrinsic)
+    time_value = max(0.01, market_price - intrinsic)
     
     # Moneyness
     moneyness = np.log(S / K) + r * T
     
-    # Initial volatility guess using approximation
-    if abs(moneyness) < 0.2:  # Near ATM
-        # Brenner-Subrahmanyam approximation for near-ATM options
-        sigma = np.sqrt(2 * np.pi / T) * time_value / (S * np.exp(-r * T))
-    else:
-        # For non-ATM options
-        sigma = np.sqrt(abs(2 * moneyness / T)) * time_value / (S * np.exp(-r * T))
+    # Initial guess selection based on option characteristics
+    if option_type.lower() == 'call':
+        if K > S:  # OTM call
+            # For OTM calls with low market prices, start with a reasonable volatility
+            # instead of letting the algorithm drive it too low
+            sigma = 0.15  # Start with 15% for OTM options
+            
+            # If market price is very low relative to spot, adjust initial guess
+            if market_price < 0.01 * S:
+                # Use bisection to find better initial guess
+                low_vol, high_vol = 0.05, 0.5
+                for _ in range(5):
+                    mid_vol = (low_vol + high_vol) / 2
+                    price = black_scholes_calc(S, K, T, r, mid_vol, option_type)
+                    if price < market_price:
+                        low_vol = mid_vol
+                    else:
+                        high_vol = mid_vol
+                sigma = (low_vol + high_vol) / 2
+        else:  # ITM or ATM call
+            if abs(moneyness) < 0.1:  # Near ATM
+                # Brenner-Subrahmanyam approximation for near-ATM options
+                sigma = np.sqrt(2 * np.pi / T) * time_value / (S * np.exp(-r * T))
+            else:  # ITM
+                sigma = 0.2  # Start with 20% for ITM options
+    else:  # put
+        if K < S:  # OTM put
+            # Similar approach for OTM puts
+            sigma = 0.15  # Start with 15% for OTM options
+            
+            # Similar bisection for low-price OTM puts
+            if market_price < 0.01 * S:
+                low_vol, high_vol = 0.05, 0.5
+                for _ in range(5):
+                    mid_vol = (low_vol + high_vol) / 2
+                    price = black_scholes_calc(S, K, T, r, mid_vol, option_type)
+                    if price < market_price:
+                        low_vol = mid_vol
+                    else:
+                        high_vol = mid_vol
+                sigma = (low_vol + high_vol) / 2
+        else:  # ITM or ATM put
+            if abs(moneyness) < 0.1:  # Near ATM
+                sigma = np.sqrt(2 * np.pi / T) * time_value / (S * np.exp(-r * T))
+            else:  # ITM
+                sigma = 0.2  # Start with 20% for ITM options
+                
+    # Ensure initial guess is reasonable
+    sigma = max(min_sigma, min(sigma, 1.0))
     
-    # Ensure initial guess is within bounds
-    sigma = max(0.001, min(sigma, 5.0))
-    
-    # Newton-Raphson refinement
+    # Newton-Raphson refinement with robust safeguards
     for i in range(max_iterations):
         # Calculate option price
         price = black_scholes_calc(S, K, T, r, sigma, option_type)
@@ -535,17 +577,38 @@ def implied_volatility(market_price, S, K, T, r, option_type='call', precision=1
         d1 = (np.log(S/K) + (r + sigma**2/2)*T) / (sigma * np.sqrt(T))
         vega = S * np.sqrt(T) * norm.pdf(d1)
         
-        # Avoid division by zero
-        if abs(vega) < 1e-8:
-            vega = 1e-8
+        # More robust handling for tiny vegas
+        if abs(vega) < 1e-5:
+            vega = 1e-5 * (1 if vega >= 0 else -1)
         
-        # Newton-Raphson update
-        sigma = sigma - diff / vega
+        # Newton-Raphson update with dampening for stability
+        delta_sigma = diff / vega
         
-        # Ensure sigma stays within bounds
-        sigma = max(0.001, min(sigma, 5.0))
+        # Apply dampening for large steps
+        if abs(delta_sigma) > 0.1:
+            delta_sigma = 0.1 * (delta_sigma / abs(delta_sigma))
+            
+        sigma = sigma - delta_sigma
+        
+        # Ensure sigma stays within reasonable bounds
+        sigma = max(min_sigma, min(sigma, 1.0))
     
-    # If we reached max iterations, return the best estimate we have
+    # If we didn't converge, try grid search as a last resort
+    if abs(price - market_price) > precision:
+        vol_range = np.linspace(min_sigma, 1.0, 20)
+        best_vol = min_sigma
+        min_diff = float('inf')
+        
+        for vol in vol_range:
+            price = black_scholes_calc(S, K, T, r, vol, option_type)
+            diff = abs(price - market_price)
+            
+            if diff < min_diff:
+                min_diff = diff
+                best_vol = vol
+        
+        return best_vol
+    
     return sigma
     
 # Calculate Strategy Greeks
