@@ -2857,15 +2857,6 @@ def main():
                                 except Exception as e:
                                     st.error(f"Error processing stress test results: {str(e)}")
                                 
-                                # Create DataFrame from results
-                                stress_data = []
-                                for scenario, results in stress_results.items():
-                                    stress_data.append({
-                                        "Scenario": scenario,
-                                        "P&L": results["P&L"],
-                                        "% Change": results["Portfolio_Change_Pct"],
-                                        "Scenario Details": f"{results['Applied_Scenario']['Price Change']} price, {results['Applied_Scenario']['Volatility Multiplier']} vol, {results['Applied_Scenario']['Rate Change']} rate"
-                                    })
                                 
                                 stress_df = pd.DataFrame(stress_data)
                                 
