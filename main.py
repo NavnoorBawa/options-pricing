@@ -1993,7 +1993,7 @@ def main():
                         with st.spinner("Running stress tests..."):
                             # Correct input values for stress_test_portfolio function
                             stress_results = stress_test_portfolio(
-                                strategies=[strategy_type],  # Must be a list, not a string
+                                strategies=["Long Call"],  # Must be a list, not a string
                                 quantities=[1],             # Must be a list, not a single integer
                                 spot_price=current_price,   # Single float value
                                 strikes=[strike_price],     # Must be a list
@@ -2029,57 +2029,35 @@ def main():
                                             })
                                     except Exception as e:
                                         st.warning(f"Error processing scenario {scenario}: {str(e)}")
+                                
+                                stress_df = pd.DataFrame(stress_data)
+                                
+                                # Display results as a table
+                                st.dataframe(stress_df.style.format({
+                                    "P&L": "${:.2f}",
+                                    "% Change": "{:.2f}%"
+                                }))
+                                
+                                # Create bar chart of stress test results
+                                fig = plt.figure(figsize=(10, 6))
+                                plt.bar(stress_df["Scenario"], stress_df["P&L"],
+                                       color=['red' if x < 0 else 'green' for x in stress_df["P&L"]])
+                                plt.axhline(y=0, color='white', linestyle='-', alpha=0.3)
+                                plt.ylabel('P&L ($)')
+                                plt.title('Stress Test Results')
+                                plt.xticks(rotation=45)
+                                
+                                # Add values on top of bars
+                                for i, v in enumerate(stress_df["P&L"]):
+                                    plt.text(i, v + (5 if v >= 0 else -5),
+                                           f'${v:.2f}',
+                                           ha='center',
+                                           va='bottom' if v >= 0 else 'top',
+                                           color='white')
+                                    
+                                st.pyplot(fig)
                             except Exception as e:
                                 st.error(f"Error processing stress test results: {str(e)}")
-                            
-                            # Create DataFrame from results
-                            stress_data = []
-                            for scenario, results in stress_results.items():
-                                # Check if we have a properly formatted scenario dictionary
-                                if isinstance(results, dict) and "P&L" in results and "Portfolio_Change_Pct" in results and "Applied_Scenario" in results:
-                                    scenario_details = f"{results['Applied_Scenario']['Price Change']} price, {results['Applied_Scenario']['Volatility Multiplier']} vol, {results['Applied_Scenario']['Rate Change']} rate"
-                                    
-                                    stress_data.append({
-                                        "Scenario": scenario,
-                                        "P&L": results["P&L"],
-                                        "% Change": results["Portfolio_Change_Pct"],
-                                        "Scenario Details": scenario_details
-                                    })
-                                else:
-                                    # Fallback for simple format (if results is just a float)
-                                    stress_data.append({
-                                        "Scenario": scenario,
-                                        "P&L": results if isinstance(results, (int, float)) else 0.0,
-                                        "% Change": 0.0,
-                                        "Scenario Details": "N/A"
-                                    })
-                            
-                            stress_df = pd.DataFrame(stress_data)
-                            
-                            # Display results as a table
-                            st.dataframe(stress_df.style.format({
-                                "P&L": "${:.2f}",
-                                "% Change": "{:.2f}%"
-                            }))
-                            
-                            # Create bar chart of stress test results
-                            fig = plt.figure(figsize=(10, 6))
-                            plt.bar(stress_df["Scenario"], stress_df["P&L"],
-                                   color=['red' if x < 0 else 'green' for x in stress_df["P&L"]])
-                            plt.axhline(y=0, color='white', linestyle='-', alpha=0.3)
-                            plt.ylabel('P&L ($)')
-                            plt.title('Stress Test Results')
-                            plt.xticks(rotation=45)
-                            
-                            # Add values on top of bars
-                            for i, v in enumerate(stress_df["P&L"]):
-                                plt.text(i, v + (5 if v >= 0 else -5),
-                                       f'${v:.2f}',
-                                       ha='center',
-                                       va='bottom' if v >= 0 else 'top',
-                                       color='white')
-                                
-                            st.pyplot(fig)
         
         with strategy_tab:
             # Define strategy categories
@@ -2854,36 +2832,35 @@ def main():
                                                 })
                                         except Exception as e:
                                             st.warning(f"Error processing scenario {scenario}: {str(e)}")
+                                    
+                                    stress_df = pd.DataFrame(stress_data)
+                                    
+                                    # Display results as a table
+                                    st.dataframe(stress_df.style.format({
+                                        "P&L": "${:.2f}",
+                                        "% Change": "{:.2f}%"
+                                    }))
+                                    
+                                    # Create bar chart of stress test results
+                                    fig = plt.figure(figsize=(10, 6))
+                                    plt.bar(stress_df["Scenario"], stress_df["P&L"],
+                                           color=['red' if x < 0 else 'green' for x in stress_df["P&L"]])
+                                    plt.axhline(y=0, color='white', linestyle='-', alpha=0.3)
+                                    plt.ylabel('P&L ($)')
+                                    plt.title('Stress Test Results')
+                                    plt.xticks(rotation=45)
+                                    
+                                    # Add values on top of bars
+                                    for i, v in enumerate(stress_df["P&L"]):
+                                        plt.text(i, v + (5 if v >= 0 else -5),
+                                               f'${v:.2f}',
+                                               ha='center',
+                                               va='bottom' if v >= 0 else 'top',
+                                               color='white')
+                                        
+                                    st.pyplot(fig)
                                 except Exception as e:
                                     st.error(f"Error processing stress test results: {str(e)}")
-                                
-                                
-                                stress_df = pd.DataFrame(stress_data)
-                                
-                                # Display results as a table
-                                st.dataframe(stress_df.style.format({
-                                    "P&L": "${:.2f}",
-                                    "% Change": "{:.2f}%"
-                                }))
-                                
-                                # Create bar chart of stress test results
-                                fig = plt.figure(figsize=(10, 6))
-                                plt.bar(stress_df["Scenario"], stress_df["P&L"],
-                                       color=['red' if x < 0 else 'green' for x in stress_df["P&L"]])
-                                plt.axhline(y=0, color='white', linestyle='-', alpha=0.3)
-                                plt.ylabel('P&L ($)')
-                                plt.title('Stress Test Results')
-                                plt.xticks(rotation=45)
-                                
-                                # Add values on top of bars
-                                for i, v in enumerate(stress_df["P&L"]):
-                                    plt.text(i, v + (5 if v >= 0 else -5),
-                                           f'${v:.2f}',
-                                           ha='center',
-                                           va='bottom' if v >= 0 else 'top',
-                                           color='white')
-                                    
-                                st.pyplot(fig)
             
             elif quant_tool == "Risk Scenario Analysis":
                 st.subheader("Strategy Scenario Analysis")
