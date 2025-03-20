@@ -941,23 +941,30 @@ def var_calculator(strategies, quantities, spot_price, strikes, maturities, rate
         'Volatility_Model': 'GARCH' if use_garch else 'Constant'
     }
 
-def stress_test_portfolio(strategies, quantities, spot_price, strikes, maturities, rates, vols,
-                         stress_scenarios=None):
-    """
-    Perform stress testing on an options portfolio using historical scenarios
+def stress_test_portfolio(strategies, quantities, spot_price, strikes, maturities, rates, vols, stress_scenarios=None):
+    """Perform stress testing on an options portfolio using historical scenarios"""
+    # Convert string to list if needed
+    if isinstance(strategies, str):
+        strategies = [strategies]
     
-    Parameters:
-    -----------
-    strategies, quantities, spot_price, strikes, maturities, rates, vols:
-        Same as in var_calculator
-    stress_scenarios : dict
-        Dictionary of stress scenarios with price changes and volatility changes
+    # Convert to lists if single values passed
+    if not isinstance(quantities, (list, np.ndarray)):
+        quantities = [quantities]
+    if not isinstance(strikes, (list, np.ndarray)):
+        strikes = [strikes]
+    if not isinstance(maturities, (list, np.ndarray)):
+        maturities = [maturities]
+    
+    # Ensure all lists have same length
+    n = len(strategies)
+    if len(quantities) == 1 and n > 1:
+        quantities = quantities * n
+    if len(strikes) == 1 and n > 1:
+        strikes = strikes * n
+    if len(maturities) == 1 and n > 1:
+        maturities = maturities * n
         
-    Returns:
-    --------
-    dict: Stress test results
-    """
-    # Default stress scenarios if none provided - UPDATED with historically accurate values
+    # Default stress scenarios
     if stress_scenarios is None:
         stress_scenarios = {
             "2008_Crisis": {"price_change": -0.50, "vol_multiplier": 3.0, "rate_change": -0.02},
@@ -1984,15 +1991,46 @@ def main():
                     if stress_test_tab:
                         st.subheader("Stress Test Results")
                         with st.spinner("Running stress tests..."):
+                            # Correct input values for stress_test_portfolio function
                             stress_results = stress_test_portfolio(
-                                strategies=["Long Call"],
-                                quantities=[1],
-                                spot_price=current_price,
-                                strikes=[strike_price],
-                                maturities=[time_to_maturity],
-                                rates=risk_free_rate,
-                                vols=volatility
+                                strategies=[strategy_type],  # Must be a list, not a string
+                                quantities=[1],             # Must be a list, not a single integer
+                                spot_price=current_price,   # Single float value
+                                strikes=[strike_price],     # Must be a list
+                                maturities=[time_to_maturity], # Must be a list
+                                rates=risk_free_rate,       # Single float value
+                                vols=volatility             # Single float value
                             )
+                            # Add the new error handling code here:
+                            try:
+                                # Create DataFrame from results
+                                stress_data = []
+                                for scenario, results in stress_results.items():
+                                    try:
+                                        # Handle if results is a dictionary with expected structure
+                                        if isinstance(results, dict) and "P&L" in results:
+                                            scenario_details = "N/A"
+                                            if "Applied_Scenario" in results:
+                                                scenario_details = f"{results['Applied_Scenario']['Price Change']} price, {results['Applied_Scenario']['Volatility Multiplier']} vol, {results['Applied_Scenario']['Rate Change']} rate"
+                                            
+                                            stress_data.append({
+                                                "Scenario": scenario,
+                                                "P&L": results["P&L"],
+                                                "% Change": results.get("Portfolio_Change_Pct", 0.0),
+                                                "Scenario Details": scenario_details
+                                            })
+                                        else:
+                                            # Handle if results is just a float
+                                            stress_data.append({
+                                                "Scenario": scenario,
+                                                "P&L": float(results) if isinstance(results, (int, float)) else 0.0,
+                                                "% Change": 0.0,
+                                                "Scenario Details": "N/A"
+                                            })
+                                    except Exception as e:
+                                        st.warning(f"Error processing scenario {scenario}: {str(e)}")
+                            except Exception as e:
+                                st.error(f"Error processing stress test results: {str(e)}")
                             
                             # Create DataFrame from results
                             stress_data = []
@@ -2788,6 +2826,36 @@ def main():
                                     rates=risk_free_rate,
                                     vols=volatility
                                 )
+                                # Add the new error handling code here:
+                                try:
+                                    # Create DataFrame from results
+                                    stress_data = []
+                                    for scenario, results in stress_results.items():
+                                        try:
+                                            # Handle if results is a dictionary with expected structure
+                                            if isinstance(results, dict) and "P&L" in results:
+                                                scenario_details = "N/A"
+                                                if "Applied_Scenario" in results:
+                                                    scenario_details = f"{results['Applied_Scenario']['Price Change']} price, {results['Applied_Scenario']['Volatility Multiplier']} vol, {results['Applied_Scenario']['Rate Change']} rate"
+                                                
+                                                stress_data.append({
+                                                    "Scenario": scenario,
+                                                    "P&L": results["P&L"],
+                                                    "% Change": results.get("Portfolio_Change_Pct", 0.0),
+                                                    "Scenario Details": scenario_details
+                                                })
+                                            else:
+                                                # Handle if results is just a float
+                                                stress_data.append({
+                                                    "Scenario": scenario,
+                                                    "P&L": float(results) if isinstance(results, (int, float)) else 0.0,
+                                                    "% Change": 0.0,
+                                                    "Scenario Details": "N/A"
+                                                })
+                                        except Exception as e:
+                                            st.warning(f"Error processing scenario {scenario}: {str(e)}")
+                                except Exception as e:
+                                    st.error(f"Error processing stress test results: {str(e)}")
                                 
                                 # Create DataFrame from results
                                 stress_data = []
