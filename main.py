@@ -884,11 +884,32 @@ def var_calculator(strategies, quantities, spot_price, strikes, maturities, rate
     # Calculate current portfolio value
     current_portfolio_value = 0
     for i in range(n_positions):
-        if 'Call' in strategies[i]:
-            option_price = black_scholes_calc(spot_price, strikes[i], maturities[i], rates[i], vols[i], 'call')
-        else:
-            option_price = black_scholes_calc(spot_price, strikes[i], maturities[i], rates[i], vols[i], 'put')
-        current_portfolio_value += quantities[i] * option_price
+        strategy = strategies[i]
+        
+        if strategy == "Protective Put":
+            # For Protective Put: Current value = Stock value + Put value
+            stock_value = spot_price
+            put_value = black_scholes_calc(spot_price, strikes[i], maturities[i], rates[i], vols[i], 'put')
+            position_value = stock_value + put_value
+        elif strategy == "Covered Call Writing":
+            # For Covered Call: Current value = Stock value - Call value
+            stock_value = spot_price
+            call_value = black_scholes_calc(spot_price, strikes[i], maturities[i], rates[i], vols[i], 'call')
+            position_value = stock_value - call_value
+        elif "Spread" in strategy or "Straddle" in strategy or "Iron" in strategy:
+            # For spreads, straddles, and iron strategies, delegate to a specific calculator
+            # This is a simplified approach - a real implementation would need separate logic for each
+            # Just using a default option price for demonstration
+            if "Call" in strategy:
+                position_value = black_scholes_calc(spot_price, strikes[i], maturities[i], rates[i], vols[i], 'call')
+            else:
+                position_value = black_scholes_calc(spot_price, strikes[i], maturities[i], rates[i], vols[i], 'put')
+        elif 'Call' in strategy:
+            position_value = black_scholes_calc(spot_price, strikes[i], maturities[i], rates[i], vols[i], 'call')
+        else:  # Put options
+            position_value = black_scholes_calc(spot_price, strikes[i], maturities[i], rates[i], vols[i], 'put')
+        
+        current_portfolio_value += quantities[i] * position_value
     
     # Calculate simulated portfolio values
     simulated_portfolio_values = np.zeros(n_simulations)
@@ -897,14 +918,67 @@ def var_calculator(strategies, quantities, spot_price, strikes, maturities, rate
         portfolio_value = 0
         
         for i in range(n_positions):
+            strategy = strategies[i]
             remaining_maturity = max(0, maturities[i] - horizon)
             
-            if 'Call' in strategies[i]:
-                option_price = black_scholes_calc(sim_price, strikes[i], remaining_maturity, rates[i], vols[i], 'call')
-            else:
-                option_price = black_scholes_calc(sim_price, strikes[i], remaining_maturity, rates[i], vols[i], 'put')
-                
-            portfolio_value += quantities[i] * option_price
+            if strategy == "Protective Put":
+                # For Protective Put: Simulated value = Simulated stock value + Put value
+                stock_value = sim_price
+                put_value = black_scholes_calc(sim_price, strikes[i], remaining_maturity, rates[i], vols[i], 'put')
+                position_value = stock_value + put_value
+            elif strategy == "Covered Call Writing":
+                # For Covered Call: Simulated value = Simulated stock value - Call value
+                stock_value = sim_price
+                call_value = black_scholes_calc(sim_price, strikes[i], remaining_maturity, rates[i], vols[i], 'call')
+                position_value = stock_value - call_value
+            elif "Bull Call Spread" in strategy:
+                # Long lower strike call, short higher strike call
+                lower_strike = strikes[i] * 0.9  # This is a simplification
+                upper_strike = strikes[i] * 1.1  # This is a simplification
+                long_call = black_scholes_calc(sim_price, lower_strike, remaining_maturity, rates[i], vols[i], 'call')
+                short_call = black_scholes_calc(sim_price, upper_strike, remaining_maturity, rates[i], vols[i], 'call')
+                position_value = long_call - short_call
+            elif "Bear Call Spread" in strategy:
+                # Short lower strike call, long higher strike call
+                lower_strike = strikes[i] * 0.9  # This is a simplification
+                upper_strike = strikes[i] * 1.1  # This is a simplification
+                short_call = black_scholes_calc(sim_price, lower_strike, remaining_maturity, rates[i], vols[i], 'call')
+                long_call = black_scholes_calc(sim_price, upper_strike, remaining_maturity, rates[i], vols[i], 'call')
+                position_value = short_call - long_call
+            elif "Bull Put Spread" in strategy:
+                # Short higher strike put, long lower strike put
+                lower_strike = strikes[i] * 0.9  # This is a simplification
+                upper_strike = strikes[i] * 1.1  # This is a simplification
+                short_put = black_scholes_calc(sim_price, upper_strike, remaining_maturity, rates[i], vols[i], 'put')
+                long_put = black_scholes_calc(sim_price, lower_strike, remaining_maturity, rates[i], vols[i], 'put')
+                position_value = short_put - long_put
+            elif "Bear Put Spread" in strategy:
+                # Long higher strike put, short lower strike put
+                lower_strike = strikes[i] * 0.9  # This is a simplification
+                upper_strike = strikes[i] * 1.1  # This is a simplification
+                long_put = black_scholes_calc(sim_price, upper_strike, remaining_maturity, rates[i], vols[i], 'put')
+                short_put = black_scholes_calc(sim_price, lower_strike, remaining_maturity, rates[i], vols[i], 'put')
+                position_value = long_put - short_put
+            elif "Long Straddle" in strategy:
+                # Long call and long put
+                call_value = black_scholes_calc(sim_price, strikes[i], remaining_maturity, rates[i], vols[i], 'call')
+                put_value = black_scholes_calc(sim_price, strikes[i], remaining_maturity, rates[i], vols[i], 'put')
+                position_value = call_value + put_value
+            elif "Short Straddle" in strategy:
+                # Short call and short put
+                call_value = black_scholes_calc(sim_price, strikes[i], remaining_maturity, rates[i], vols[i], 'call')
+                put_value = black_scholes_calc(sim_price, strikes[i], remaining_maturity, rates[i], vols[i], 'put')
+                position_value = -(call_value + put_value)
+            elif "Iron Butterfly" in strategy or "Iron Condor" in strategy:
+                # These are complex strategies with 4 legs
+                # Simplified approach here - a real implementation would need specific logic
+                position_value = black_scholes_calc(sim_price, strikes[i], remaining_maturity, rates[i], vols[i], 'call')
+            elif 'Call' in strategy:
+                position_value = black_scholes_calc(sim_price, strikes[i], remaining_maturity, rates[i], vols[i], 'call')
+            else:  # Put options
+                position_value = black_scholes_calc(sim_price, strikes[i], remaining_maturity, rates[i], vols[i], 'put')
+            
+            portfolio_value += quantities[i] * position_value
             
         simulated_portfolio_values[j] = portfolio_value
     
