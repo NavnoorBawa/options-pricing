@@ -963,6 +963,18 @@ def stress_test_portfolio(strategies, quantities, spot_price, strikes, maturitie
         strikes = strikes * n
     if len(maturities) == 1 and n > 1:
         maturities = maturities * n
+    
+    # Convert rates and vols to lists if they are single values
+    if not isinstance(rates, (list, np.ndarray)):
+        rates = [rates] * n
+    if not isinstance(vols, (list, np.ndarray)):
+        vols = [vols] * n
+    
+    # Ensure rates and vols have same length if they're lists
+    if len(rates) == 1 and n > 1:
+        rates = rates * n
+    if len(vols) == 1 and n > 1:
+        vols = vols * n
         
     # Default stress scenarios
     if stress_scenarios is None:
