@@ -2051,21 +2051,34 @@ def main():
                                 }))
                                 
                                 # Create bar chart of stress test results
-                                fig = plt.figure(figsize=(10, 6))
-                                plt.bar(stress_df["Scenario"], stress_df["P&L"],
-                                       color=['red' if x < 0 else 'green' for x in stress_df["P&L"]])
+                                # Create bar chart of stress test results
+                                fig = plt.figure(figsize=(12, 7))
+                                ax = plt.gca()
+                                bars = plt.bar(stress_df["Scenario"], stress_df["P&L"],
+                                       color=['#FF5555' if x < 0 else '#55CC55' for x in stress_df["P&L"]],
+                                       width=0.7)
                                 plt.axhline(y=0, color='white', linestyle='-', alpha=0.3)
-                                plt.ylabel('P&L ($)')
-                                plt.title('Stress Test Results')
-                                plt.xticks(rotation=45)
-                                
-                                # Add values on top of bars
-                                for i, v in enumerate(stress_df["P&L"]):
-                                    plt.text(i, v + (5 if v >= 0 else -5),
-                                           f'${v:.2f}',
+                                plt.ylabel('P&L ($)', fontsize=12)
+                                plt.xlabel('Scenario', fontsize=12)
+                                plt.title('Stress Test Results', fontsize=14, fontweight='bold')
+                                plt.xticks(rotation=30, ha='right', fontsize=10)
+                                plt.grid(axis='y', alpha=0.3)
+                                plt.tight_layout(pad=2)
+
+                                # Add values on top of bars with better positioning
+                                for bar in bars:
+                                    height = bar.get_height()
+                                    y_pos = min(-0.7, height - 0.5) if height < 0 else max(0.3, height + 0.5)
+                                    plt.text(bar.get_x() + bar.get_width()/2, y_pos,
+                                           f'${height:.2f}',
                                            ha='center',
-                                           va='bottom' if v >= 0 else 'top',
-                                           color='white')
+                                           va='bottom' if height >= 0 else 'top',
+                                           color='white',
+                                           fontweight='bold',
+                                           fontsize=11)
+                                    
+                                # Add more whitespace at the bottom for labels
+                                plt.subplots_adjust(bottom=0.15)
                                     
                                 st.pyplot(fig)
                             except Exception as e:
@@ -2854,21 +2867,34 @@ def main():
                                     }))
                                     
                                     # Create bar chart of stress test results
-                                    fig = plt.figure(figsize=(10, 6))
-                                    plt.bar(stress_df["Scenario"], stress_df["P&L"],
-                                           color=['red' if x < 0 else 'green' for x in stress_df["P&L"]])
+                                    # Create bar chart of stress test results
+                                    fig = plt.figure(figsize=(12, 7))
+                                    ax = plt.gca()
+                                    bars = plt.bar(stress_df["Scenario"], stress_df["P&L"],
+                                           color=['#FF5555' if x < 0 else '#55CC55' for x in stress_df["P&L"]],
+                                           width=0.7)
                                     plt.axhline(y=0, color='white', linestyle='-', alpha=0.3)
-                                    plt.ylabel('P&L ($)')
-                                    plt.title('Stress Test Results')
-                                    plt.xticks(rotation=45)
-                                    
-                                    # Add values on top of bars
-                                    for i, v in enumerate(stress_df["P&L"]):
-                                        plt.text(i, v + (5 if v >= 0 else -5),
-                                               f'${v:.2f}',
+                                    plt.ylabel('P&L ($)', fontsize=12)
+                                    plt.xlabel('Scenario', fontsize=12)
+                                    plt.title('Stress Test Results', fontsize=14, fontweight='bold')
+                                    plt.xticks(rotation=30, ha='right', fontsize=10)
+                                    plt.grid(axis='y', alpha=0.3)
+                                    plt.tight_layout(pad=2)
+
+                                    # Add values on top of bars with better positioning
+                                    for bar in bars:
+                                        height = bar.get_height()
+                                        y_pos = min(-0.7, height - 0.5) if height < 0 else max(0.3, height + 0.5)
+                                        plt.text(bar.get_x() + bar.get_width()/2, y_pos,
+                                               f'${height:.2f}',
                                                ha='center',
-                                               va='bottom' if v >= 0 else 'top',
-                                               color='white')
+                                               va='bottom' if height >= 0 else 'top',
+                                               color='white',
+                                               fontweight='bold',
+                                               fontsize=11)
+                                        
+                                    # Add more whitespace at the bottom for labels
+                                    plt.subplots_adjust(bottom=0.15)
                                         
                                     st.pyplot(fig)
                                 except Exception as e:
