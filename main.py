@@ -1997,12 +1997,24 @@ def main():
                             # Create DataFrame from results
                             stress_data = []
                             for scenario, results in stress_results.items():
-                                stress_data.append({
-                                    "Scenario": scenario,
-                                    "P&L": results["P&L"],
-                                    "% Change": results["Portfolio_Change_Pct"],
-                                    "Scenario Details": f"{results['Applied_Scenario']['Price Change']} price, {results['Applied_Scenario']['Volatility Multiplier']} vol, {results['Applied_Scenario']['Rate Change']} rate"
-                                })
+                                # Check if we have a properly formatted scenario dictionary
+                                if isinstance(results, dict) and "P&L" in results and "Portfolio_Change_Pct" in results and "Applied_Scenario" in results:
+                                    scenario_details = f"{results['Applied_Scenario']['Price Change']} price, {results['Applied_Scenario']['Volatility Multiplier']} vol, {results['Applied_Scenario']['Rate Change']} rate"
+                                    
+                                    stress_data.append({
+                                        "Scenario": scenario,
+                                        "P&L": results["P&L"],
+                                        "% Change": results["Portfolio_Change_Pct"],
+                                        "Scenario Details": scenario_details
+                                    })
+                                else:
+                                    # Fallback for simple format (if results is just a float)
+                                    stress_data.append({
+                                        "Scenario": scenario,
+                                        "P&L": results if isinstance(results, (int, float)) else 0.0,
+                                        "% Change": 0.0,
+                                        "Scenario Details": "N/A"
+                                    })
                             
                             stress_df = pd.DataFrame(stress_data)
                             
