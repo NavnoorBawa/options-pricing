@@ -2163,8 +2163,529 @@ def main():
                         st.error(f"Error calculating implied volatility: {str(iv_error)}")
             
             elif quant_tool == "Local Volatility Surface":
-                # [This section remains the same]
-                # ... (keeping the code unchanged for brevity)
+                st.subheader("Local Volatility Surface Generator")
+                
+                # Introduction with theory
+                with st.expander("About Local Volatility Models"):
+                    st.markdown("""
+                    ### The Dupire Local Volatility Model
+                    
+                    The local volatility model, developed by Bruno Dupire and Emanuel Derman, extends the Black-Scholes framework by allowing volatility to vary with both strike price and time. This addresses key market features like volatility skew and smile that constant volatility models cannot capture.
+                    
+                    #### Mathematical Foundation:
+                    
+                    Dupire's formula relates the local volatility $\sigma_{loc}(K, T)$ to the implied volatility surface:
+                    
+                    $$\sigma_{loc}^2(K, T) = \\frac{\\frac{\partial C}{\partial T} + (r-q)K\\frac{\partial C}{\partial K} + qC}{\\frac{1}{2}K^2\\frac{\partial^2 C}{\partial K^2}}$$
+                    
+                    where:
+                    - $C$ is the call option price
+                    - $K$ is the strike price
+                    - $T$ is time to maturity
+                    - $r$ is the risk-free rate
+                    - $q$ is the dividend yield
+                    
+                    This tool implements a numerically stable version of this formula with sophisticated smoothing techniques.
+                    """)
+                
+                # Create interface with two columns
+                col1, col2 = st.columns([2, 2])
+                
+                with col1:
+                    # Data source selection
+                    data_source = st.radio(
+                        "Select Data Source",
+                        ["Simulated Market", "Custom Parameters", "Upload Market Data"],
+                        key="vol_data_source"
+                    )
+                    
+                    if data_source == "Simulated Market":
+                        # Parameters for simulated data
+                        st.subheader("Simulated Market Parameters")
+                        skew_factor = st.slider("Volatility Skew", -0.3, 0.3, -0.1, 0.05,
+                                              help="Negative values create downward sloping skew (typical in equity markets)")
+                        smile_factor = st.slider("Volatility Smile", 0.0, 0.3, 0.05, 0.01,
+                                               help="Higher values create stronger smile (U-shape)")
+                        term_structure = st.slider("Term Structure", -0.1, 0.2, 0.05, 0.01,
+                                                 help="Positive values mean longer-dated options have higher volatility")
+                    
+                    elif data_source == "Custom Parameters":
+                        # Advanced custom parameters
+                        st.subheader("Custom Surface Parameters")
+                        base_vol = st.number_input("Base Volatility", value=volatility, min_value=0.01, max_value=1.0, step=0.01)
+                        num_strikes = st.slider("Number of Strikes", 5, 15, 9)
+                        num_maturities = st.slider("Number of Maturities", 3, 10, 6)
+                        moneyness_range = st.slider("Moneyness Range", 0.5, 2.0, (0.7, 1.3))
+                        max_maturity = st.slider("Maximum Maturity (Years)", 0.5, 5.0, 2.0)
+                    
+                    elif data_source == "Upload Market Data":
+                        # File upload option
+                        st.subheader("Upload Market Data")
+                        uploaded_file = st.file_uploader(
+                            "Upload option chain CSV",
+                            type=["csv"],
+                            help="CSV should contain: Strike, Maturity, ImpliedVol columns"
+                        )
+                        
+                        if uploaded_file is not None:
+                            st.info("File uploaded successfully. Configure processing parameters below.")
+                        
+                        interpolation_method = st.selectbox(
+                            "Interpolation Method",
+                            ["Cubic Spline", "Thin Plate Spline", "Linear"],
+                            help="Method used to fill gaps in market data"
+                        )
+                
+                with col2:
+                    # Common parameters for all modes
+                    st.subheader("Calculation Parameters")
+                    
+                    dividend_yield = st.number_input(
+                        "Dividend Yield (%)",
+                        value=0.0, min_value=0.0, max_value=10.0, step=0.1
+                    ) / 100.0
+                    
+                    smoothing_level = st.slider(
+                        "Surface Smoothing",
+                        0.0, 1.0, 0.2, 0.05,
+                        help="Controls smoothness of the output (higher = smoother)"
+                    )
+                    
+                    # Visualization options
+                    st.subheader("Visualization Options")
+                    
+                    display_mode = st.radio(
+                        "Display Mode",
+                        ["3D Surface", "Contour Plot", "Term Structure", "Skew Analysis", "All Views"]
+                    )
+                    
+                    color_scheme = st.selectbox(
+                        "Color Scheme",
+                        ["viridis", "plasma", "inferno", "magma", "cividis"]
+                    )
+
+                # Generate volatility surfaces based on selected method
+                if st.button("Generate Local Volatility Surface"):
+                    with st.spinner("Calculating local volatility surface..."):
+                        try:
+                            # Initialize parameters based on data source
+                            if data_source == "Simulated Market":
+                                # Create simulated data with user parameters
+                                strike_pcts = np.array([0.7, 0.8, 0.9, 0.95, 1.0, 1.05, 1.1, 1.2, 1.3])
+                                maturities = np.array([1/12, 2/12, 3/12, 6/12, 9/12, 1.0, 1.5, 2.0])
+                                
+                                strikes = current_price * strike_pcts
+                                
+                                # Create volatility surface with user-specified skew, smile, and term structure
+                                implied_vols = np.zeros((len(maturities), len(strikes)))
+                                for i, t in enumerate(maturities):
+                                    for j, k in enumerate(strike_pcts):
+                                        # Model volatility with skew, smile and term structure
+                                        moneyness_effect = skew_factor * (1.0 - k)
+                                        smile_effect = smile_factor * (k - 1.0)**2
+                                        term_effect = term_structure * (t - maturities.mean())
+                                        
+                                        implied_vols[i, j] = max(0.05, volatility + moneyness_effect + smile_effect + term_effect)
+                            
+                            elif data_source == "Custom Parameters":
+                                # Generate custom grid based on user specifications
+                                strike_pcts = np.linspace(moneyness_range[0], moneyness_range[1], num_strikes)
+                                maturities = np.linspace(1/12, max_maturity, num_maturities)
+                                
+                                strikes = current_price * strike_pcts
+                                
+                                # Generate implied volatility surface with custom parameters
+                                implied_vols = np.zeros((len(maturities), len(strikes)))
+                                for i, t in enumerate(maturities):
+                                    for j, k in enumerate(strike_pcts):
+                                        # Simple volatility model with term structure and skew
+                                        term_factor = 0.05 * (t - maturities.mean())
+                                        skew_factor = -0.1 * (k - 1.0)
+                                        smile_factor = 0.05 * (k - 1.0)**2
+                                        
+                                        implied_vols[i, j] = max(0.05, base_vol + term_factor + skew_factor + smile_factor)
+                            
+                            elif data_source == "Upload Market Data" and uploaded_file is not None:
+                                # Process uploaded data
+                                market_data = pd.read_csv(uploaded_file)
+                                
+                                # Validate required columns
+                                required_columns = ["Strike", "Maturity", "ImpliedVol"]
+                                if not all(col in market_data.columns for col in required_columns):
+                                    st.error(f"CSV must contain columns: {', '.join(required_columns)}")
+                                    st.stop()
+                                
+                                # Extract unique strikes and maturities
+                                unique_strikes = np.sort(market_data["Strike"].unique())
+                                unique_maturities = np.sort(market_data["Maturity"].unique())
+                                
+                                # Create matrix for implied volatilities
+                                strikes = unique_strikes
+                                maturities = unique_maturities
+                                implied_vols = np.zeros((len(maturities), len(strikes)))
+                                
+                                # Fill matrix with market data
+                                for i, t in enumerate(maturities):
+                                    for j, k in enumerate(strikes):
+                                        mask = (market_data["Maturity"] == t) & (market_data["Strike"] == k)
+                                        if mask.any():
+                                            implied_vols[i, j] = market_data.loc[mask, "ImpliedVol"].values[0]
+                                        else:
+                                            # If using linear interpolation, we'll set missing values to NaN
+                                            # and let the spline fill them
+                                            implied_vols[i, j] = np.nan
+                                
+                                # Handle missing values in the grid
+                                if np.isnan(implied_vols).any():
+                                    if interpolation_method == "Linear":
+                                        # Simple linear interpolation for missing values
+                                        # Get coordinates of non-NaN values
+                                        ii, jj = np.where(~np.isnan(implied_vols))
+                                        known_points = np.column_stack([ii, jj])
+                                        known_values = implied_vols[~np.isnan(implied_vols)]
+                                        
+                                        # Create grid for interpolation
+                                        grid_i, grid_j = np.mgrid[0:len(maturities), 0:len(strikes)]
+                                        
+                                        # Interpolate
+                                        implied_vols = griddata(known_points, known_values, (grid_i, grid_j), method='linear')
+                                        
+                                        # Fill any remaining NaNs with nearest value
+                                        if np.isnan(implied_vols).any():
+                                            mask = np.isnan(implied_vols)
+                                            implied_vols[mask] = griddata(known_points, known_values, (grid_i[mask], grid_j[mask]), method='nearest')
+                                    
+                                    elif interpolation_method == "Cubic Spline":
+                                        # More advanced spline interpolation
+                                        # Get coordinates of non-NaN values
+                                        ii, jj = np.where(~np.isnan(implied_vols))
+                                        known_values = implied_vols[~np.isnan(implied_vols)]
+                                        
+                                        # Convert indices to actual maturity and strike values
+                                        t_points = maturities[ii]
+                                        k_points = strikes[jj]
+                                        
+                                        # Create spline
+                                        spline = SmoothBivariateSpline(t_points, k_points, known_values, s=0.1)
+                                        
+                                        # Evaluate spline at all grid points
+                                        T_mesh, K_mesh = np.meshgrid(maturities, strikes, indexing='ij')
+                                        implied_vols = spline(maturities, strikes)
+                                        
+                                    else:  # Thin Plate Spline
+                                        # Get coordinates of non-NaN values
+                                        ii, jj = np.where(~np.isnan(implied_vols))
+                                        known_values = implied_vols[~np.isnan(implied_vols)]
+                                        
+                                        # Convert indices to actual maturity and strike values
+                                        t_points = maturities[ii]
+                                        k_points = strikes[jj]
+                                        
+                                        # Create RBF interpolator
+                                        rbf = Rbf(t_points, k_points, known_values, function='thin_plate')
+                                        
+                                        # Evaluate RBF at all grid points
+                                        T_mesh, K_mesh = np.meshgrid(maturities, strikes, indexing='ij')
+                                        implied_vols = rbf(T_mesh, K_mesh)
+                            else:
+                                st.error("Please upload a file when using 'Upload Market Data' option")
+                                st.stop()
+                            
+                            # Generate local volatility surface
+                            local_vols, smoothed_ivs, diagnostics = enhanced_local_volatility_surface(
+                                strikes, maturities, implied_vols, current_price, risk_free_rate,
+                                dividend_yield, smoothing_level
+                            )
+                            
+                            # Analyze the volatility surfaces
+                            analysis_results = analyze_vol_surface(
+                                local_vols, smoothed_ivs, strikes, maturities, current_price
+                            )
+                            
+                            # Create visualization based on selected display mode
+                            # Create grid for visualization
+                            K_grid, T_grid = np.meshgrid(strikes/current_price, maturities)
+                            
+                            if display_mode == "3D Surface" or display_mode == "All Views":
+                                st.subheader("Volatility Surfaces")
+                                
+                                fig = plt.figure(figsize=(14, 10))
+                                
+                                # Plot two surfaces: implied and local volatility
+                                ax1 = fig.add_subplot(221, projection='3d')
+                                surf1 = ax1.plot_surface(K_grid, T_grid, smoothed_ivs, cmap=color_scheme, alpha=0.8)
+                                ax1.set_xlabel('Moneyness (K/S)')
+                                ax1.set_ylabel('Maturity (Years)')
+                                ax1.set_zlabel('Volatility')
+                                ax1.set_title('Implied Volatility Surface')
+                                fig.colorbar(surf1, ax=ax1, shrink=0.5, aspect=5)
+                                
+                                ax2 = fig.add_subplot(222, projection='3d')
+                                surf2 = ax2.plot_surface(K_grid, T_grid, local_vols, cmap=color_scheme, alpha=0.8)
+                                ax2.set_xlabel('Moneyness (K/S)')
+                                ax2.set_ylabel('Maturity (Years)')
+                                ax2.set_zlabel('Volatility')
+                                ax2.set_title('Local Volatility Surface')
+                                fig.colorbar(surf2, ax=ax2, shrink=0.5, aspect=5)
+                                
+                                # Add contour plots below for clarity
+                                ax3 = fig.add_subplot(223)
+                                contour1 = ax3.contourf(K_grid, T_grid, smoothed_ivs, levels=20, cmap=color_scheme)
+                                ax3.set_xlabel('Moneyness (K/S)')
+                                ax3.set_ylabel('Maturity (Years)')
+                                ax3.set_title('Implied Volatility Contour Map')
+                                fig.colorbar(contour1, ax=ax3, shrink=0.5, aspect=5)
+                                
+                                ax4 = fig.add_subplot(224)
+                                contour2 = ax4.contourf(K_grid, T_grid, local_vols, levels=20, cmap=color_scheme)
+                                ax4.set_xlabel('Moneyness (K/S)')
+                                ax4.set_ylabel('Maturity (Years)')
+                                ax4.set_title('Local Volatility Contour Map')
+                                fig.colorbar(contour2, ax=ax4, shrink=0.5, aspect=5)
+                                
+                                plt.tight_layout()
+                                st.pyplot(fig)
+                            
+                            if display_mode == "Contour Plot" or display_mode == "All Views":
+                                # High-resolution contour plots
+                                st.subheader("Volatility Contour Maps")
+                                
+                                fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+                                
+                                # Implied volatility contour
+                                im1 = ax1.contourf(K_grid, T_grid, smoothed_ivs, levels=30, cmap=color_scheme)
+                                ax1.set_xlabel('Moneyness (K/S)')
+                                ax1.set_ylabel('Maturity (Years)')
+                                ax1.set_title('Implied Volatility')
+                                plt.colorbar(im1, ax=ax1)
+                                
+                                # Add contour lines for key volatility levels
+                                cs1 = ax1.contour(K_grid, T_grid, smoothed_ivs, levels=5, colors='white', alpha=0.6, linewidths=0.5)
+                                ax1.clabel(cs1, inline=True, fontsize=8, fmt='%.2f')
+                                
+                                # Local volatility contour
+                                im2 = ax2.contourf(K_grid, T_grid, local_vols, levels=30, cmap=color_scheme)
+                                ax2.set_xlabel('Moneyness (K/S)')
+                                ax2.set_ylabel('Maturity (Years)')
+                                ax2.set_title('Local Volatility')
+                                plt.colorbar(im2, ax=ax2)
+                                
+                                # Add contour lines for key volatility levels
+                                cs2 = ax2.contour(K_grid, T_grid, local_vols, levels=5, colors='white', alpha=0.6, linewidths=0.5)
+                                ax2.clabel(cs2, inline=True, fontsize=8, fmt='%.2f')
+                                
+                                plt.tight_layout()
+                                st.pyplot(fig)
+                            
+                            if display_mode == "Term Structure" or display_mode == "All Views":
+                                # Term structure visualization
+                                st.subheader("Volatility Term Structure")
+                                
+                                # Get ATM volatilities
+                                atm_index = np.argmin(np.abs(strikes/current_price - 1.0))
+                                
+                                fig, ax = plt.subplots(figsize=(10, 6))
+                                
+                                ax.plot(maturities, smoothed_ivs[:, atm_index], 'b-o', label='ATM Implied Vol')
+                                ax.plot(maturities, local_vols[:, atm_index], 'r-^', label='ATM Local Vol')
+                                
+                                # Add OTM volatilities
+                                otm_put_idx = max(0, np.argmin(np.abs(strikes/current_price - 0.9)))
+                                otm_call_idx = min(len(strikes)-1, np.argmin(np.abs(strikes/current_price - 1.1)))
+                                
+                                ax.plot(maturities, smoothed_ivs[:, otm_put_idx], 'b--', alpha=0.6, label='90% OTM Put Implied Vol')
+                                ax.plot(maturities, smoothed_ivs[:, otm_call_idx], 'b-.', alpha=0.6, label='110% OTM Call Implied Vol')
+                                
+                                ax.set_xlabel('Maturity (Years)')
+                                ax.set_ylabel('Volatility')
+                                ax.set_title('Volatility Term Structure')
+                                ax.grid(True, alpha=0.3)
+                                ax.legend()
+                                
+                                st.pyplot(fig)
+                            
+                            if display_mode == "Skew Analysis" or display_mode == "All Views":
+                                # Volatility skew visualization
+                                st.subheader("Volatility Skew Analysis")
+                                
+                                # Select maturities for skew analysis
+                                if len(maturities) >= 3:
+                                    maturity_indices = [0, len(maturities)//2, -1]  # Short, medium, long-term
+                                    maturity_labels = ['Short-term', 'Medium-term', 'Long-term']
+                                else:
+                                    maturity_indices = list(range(len(maturities)))
+                                    maturity_labels = [f"T={t:.2f}" for t in maturities]
+                                
+                                fig, ax = plt.subplots(figsize=(12, 6))
+                                
+                                for i, idx in enumerate(maturity_indices):
+                                    if idx < 0:  # Handle negative index
+                                        actual_idx = len(maturities) + idx
+                                    else:
+                                        actual_idx = idx
+                                        
+                                    ax.plot(strikes/current_price, smoothed_ivs[actual_idx, :],
+                                           f'C{i}-o', label=f'{maturity_labels[i]} Implied Vol (T={maturities[actual_idx]:.2f})')
+                                    ax.plot(strikes/current_price, local_vols[actual_idx, :],
+                                           f'C{i}--', label=f'{maturity_labels[i]} Local Vol (T={maturities[actual_idx]:.2f})')
+                                
+                                ax.axvline(x=1.0, color='gray', linestyle='--', alpha=0.5, label='ATM')
+                                ax.set_xlabel('Moneyness (K/S)')
+                                ax.set_ylabel('Volatility')
+                                ax.set_title('Volatility Skew Across Maturities')
+                                ax.grid(True, alpha=0.3)
+                                ax.legend()
+                                
+                                st.pyplot(fig)
+                            
+                            # Display analysis results
+                            st.subheader("Quantitative Analysis")
+                            
+                            # Organize results into columns
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                st.markdown("### Surface Characteristics")
+                                
+                                # ATM Term Structure
+                                atm_index = np.argmin(np.abs(strikes/current_price - 1.0))
+                                
+                                # Create DataFrame for ATM vols
+                                atm_vol_df = pd.DataFrame({
+                                    'Maturity': maturities,
+                                    'ATM Implied Vol': smoothed_ivs[:, atm_index],
+                                    'ATM Local Vol': local_vols[:, atm_index]
+                                })
+                                
+                                st.markdown("#### ATM Volatility Term Structure")
+                                st.dataframe(atm_vol_df.style.format({
+                                    'Maturity': '{:.2f}',
+                                    'ATM Implied Vol': '{:.2%}',
+                                    'ATM Local Vol': '{:.2%}'
+                                }))
+                                
+                                # Skew Analysis
+                                st.markdown("#### Volatility Skew Analysis")
+                                skew_df = pd.DataFrame(analysis_results['skew_analysis'])
+                                st.dataframe(skew_df.style.format({
+                                    'maturity': '{:.2f}',
+                                    'local_skew': '{:.4f}',
+                                    'implied_skew': '{:.4f}'
+                                }))
+                            
+                            with col2:
+                                st.markdown("### Numerical Diagnostics")
+                                
+                                # Surface stability assessment
+                                st.markdown("#### Surface Stability")
+                                st.info(f"Stability Assessment: {analysis_results['surface_stability']['stability_assessment']}")
+                                st.metric("Smoothness Metric", f"{analysis_results['surface_stability']['smoothness_metric']:.4f}")
+                                
+                                # Implied vs Local Vol comparison
+                                st.markdown("#### IV vs LV Comparison")
+                                comp_df = pd.DataFrame([{
+                                    'Metric': 'Mean Difference',
+                                    'Value': analysis_results['vol_comparison']['mean_diff']
+                                }, {
+                                    'Metric': 'Max Difference',
+                                    'Value': analysis_results['vol_comparison']['max_diff']
+                                }, {
+                                    'Metric': 'Min Difference',
+                                    'Value': analysis_results['vol_comparison']['min_diff']
+                                }, {
+                                    'Metric': 'RMS Difference',
+                                    'Value': analysis_results['vol_comparison']['rms_diff']
+                                }])
+                                
+                                st.dataframe(comp_df.style.format({
+                                    'Value': '{:.4f}'
+                                }))
+                                
+                                # Calculation diagnostics
+                                st.markdown("#### Calculation Diagnostics")
+                                diag_df = pd.DataFrame([{
+                                    'Metric': 'Boundary Points',
+                                    'Count': diagnostics['boundary_points']
+                                }, {
+                                    'Metric': 'Denominator Fixes',
+                                    'Count': diagnostics['denominator_fixes']
+                                }, {
+                                    'Metric': 'Extreme Values Clipped',
+                                    'Count': diagnostics['extreme_values_clipped']
+                                }])
+                                
+                                st.dataframe(diag_df)
+                            
+                                # Option to download data
+                                st.subheader("Download Results")
+
+                                try:
+                                    # Try to import xlsxwriter
+                                    import xlsxwriter
+                                    excel_export_available = True
+                                except ImportError:
+                                    excel_export_available = False
+
+                                # Create DataFrame collection for export
+                                export_data = {
+                                    'Parameters': pd.DataFrame([
+                                        {'Parameter': 'Spot Price', 'Value': current_price},
+                                        {'Parameter': 'Risk-Free Rate', 'Value': risk_free_rate},
+                                        {'Parameter': 'Dividend Yield', 'Value': dividend_yield},
+                                        {'Parameter': 'Smoothing Level', 'Value': smoothing_level}
+                                    ]),
+                                    'Strikes': pd.DataFrame({'Strike': strikes, 'Moneyness': strikes/current_price}),
+                                    'Maturities': pd.DataFrame({'Maturity': maturities}),
+                                    'ImpliedVolSurface': pd.DataFrame(
+                                        smoothed_ivs,
+                                        index=[f'T={t:.2f}' for t in maturities],
+                                        columns=[f'K={k:.1f}' for k in strikes]
+                                    ),
+                                    'LocalVolSurface': pd.DataFrame(
+                                        local_vols,
+                                        index=[f'T={t:.2f}' for t in maturities],
+                                        columns=[f'K={k:.1f}' for k in strikes]
+                                    ),
+                                    'ATM_TermStructure': atm_vol_df,
+                                    'SkewAnalysis': skew_df
+                                }
+
+                                # CSV export option (always available)
+                                for name, df in export_data.items():
+                                    csv_buffer = io.StringIO()
+                                    df.to_csv(csv_buffer)
+                                    csv_buffer.seek(0)
+                                    
+                                    st.download_button(
+                                        label=f"Download {name} as CSV",
+                                        data=csv_buffer.getvalue().encode(),
+                                        file_name=f"{name.lower()}.csv",
+                                        mime="text/csv",
+                                        key=f"csv_{name}"
+                                    )
+
+                                # Excel export option (if xlsxwriter is available)
+                                if excel_export_available:
+                                    buffer = io.BytesIO()
+                                    
+                                    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                                        for name, df in export_data.items():
+                                            df.to_excel(writer, sheet_name=name, index=name in ['ImpliedVolSurface', 'LocalVolSurface'])
+                                    
+                                    buffer.seek(0)
+                                    
+                                    st.download_button(
+                                        label="Download All Data as Excel Workbook",
+                                        data=buffer,
+                                        file_name="volatility_surfaces.xlsx",
+                                        mime="application/vnd.ms-excel"
+                                    )
+                                else:
+                                    st.info("Excel export requires the xlsxwriter package. Use the CSV downloads above or install xlsxwriter with 'pip install xlsxwriter'.")
+                            
+                        except Exception as e:
+                            st.error(f"Error calculating volatility surface: {str(e)}")
+                            st.exception(e)
             
             elif quant_tool == "Value at Risk (VaR)":
                 st.subheader("Value at Risk Calculator")
@@ -2180,7 +2701,7 @@ def main():
                 
                 # Add enhanced VaR options
                 use_t_dist = st.checkbox("Use Student's t-distribution (fat tails)", True,
-                                       help="Better captures extreme market events than normal distribution")
+                                      help="Better captures extreme market events than normal distribution")
                 if use_t_dist:
                     degrees_of_freedom = st.slider("Degrees of Freedom", 3, 10, 5, 1,
                                                  help="Lower values create fatter tails (3-5 for financial markets)")
@@ -2294,8 +2815,55 @@ def main():
                                 st.pyplot(fig)
             
             elif quant_tool == "Risk Scenario Analysis":
-                # [This section remains the same]
-                # ... (keeping the code unchanged for brevity)
+                st.subheader("Strategy Scenario Analysis")
+                
+                strategy_list = ["Long Call", "Long Put", "Covered Call Writing", "Protective Put",
+                              "Bull Call Spread", "Bear Put Spread", "Long Straddle", "Iron Condor"]
+                selected_strategy = st.selectbox("Select Strategy for Analysis", strategy_list)
+                
+                if st.button("Run Scenario Analysis"):
+                    with st.spinner("Running scenario analysis..."):
+                        risk_results = risk_scenario_analysis(
+                            selected_strategy, current_price, strike_price, time_to_maturity,
+                            risk_free_rate, volatility, calculate_strategy_pnl
+                        )
+                        
+                        # Display price impact
+                        st.subheader("Price Impact Scenarios")
+                        price_fig = plt.figure(figsize=(10, 5))
+                        bars = plt.bar(
+                            [f"{p:.0f}" for p in risk_results['price_impact']['scenarios']],
+                            risk_results['price_impact']['pnl'],
+                            color=['red' if x < 0 else 'green' for x in risk_results['price_impact']['pnl']]
+                        )
+                        plt.axhline(y=0, color='white', linestyle='-', alpha=0.3)
+                        plt.xlabel('Price Scenarios')
+                        plt.ylabel('P&L')
+                        plt.title('Price Impact on P&L')
+                        
+                        # Add values on top of bars
+                        for bar in bars:
+                            height = bar.get_height()
+                            plt.text(bar.get_x() + bar.get_width()/2., height,
+                                  f'${height:.2f}',
+                                  ha='center', va='bottom' if height > 0 else 'top',
+                                  color='white')
+                        
+                        st.pyplot(price_fig)
+                        
+                        # Display extreme scenarios
+                        st.subheader("Extreme Market Scenarios")
+                        st.markdown(f"""
+                            <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
+                                <h4 style="color: white;">Extreme Scenario P&L Impact</h4>
+                                <ul style="color: white; list-style-type: none; padding-left: 0;">
+                                    <li>• Market Crash (-20%): ${risk_results['extreme_scenarios']['market_crash']:.2f}</li>
+                                    <li>• Market Rally (+20%): ${risk_results['extreme_scenarios']['market_rally']:.2f}</li>
+                                    <li>• Volatility Explosion (2x): ${risk_results['extreme_scenarios']['vol_explosion']:.2f}</li>
+                                    <li>• Volatility Collapse (0.5x): ${risk_results['extreme_scenarios']['vol_collapse']:.2f}</li>
+                                </ul>
+                            </div>
+                        """, unsafe_allow_html=True)
 
     except Exception as e:
         st.error(f"An error occurred: {str(e)}")
