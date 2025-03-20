@@ -431,8 +431,8 @@ def calculate_strategy_pnl(strategy_type, spot_range, current_price, strike_pric
         elif strategy_type == "Iron Condor":
             # Bull put spread + bear call spread
             # Net Credit - max(0, K1 - ST) + max(0, (K1 - Δ) - ST) - max(0, ST - K2) + max(0, ST - (K2 + Δ))
-            net_credit = (upper_put_value - very_lower_put_value) + (lower_call_value - very_upper_call_value)
-            pnl[i] = net_credit - max(0, upper_strike - spot) + max(0, very_lower_strike - spot) - max(0, spot - lower_strike) + max(0, spot - very_upper_strike)
+            net_credit = (lower_put_value - very_lower_put_value) + (upper_call_value - very_upper_call_value)
+            pnl[i] = net_credit - max(0, lower_strike - spot) + max(0, very_lower_strike - spot) - max(0, spot - upper_strike) + max(0, spot - very_upper_strike)
         
         else:
             # Default for unknown strategies
