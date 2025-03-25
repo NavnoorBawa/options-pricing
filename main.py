@@ -3195,14 +3195,22 @@ def main():
                                 # Determine which P&L values to show based on user selection
                                 display_pnl = risk_results['price_impact']['absolute_pnl'] if show_absolute_pnl else risk_results['price_impact']['pnl_change']
                                 
+                         
                                 # Create color gradient based on values
                                 colors = ['#FF4136' if x < 0 else '#2ECC40' for x in display_pnl]
-                                alpha_values = [0.6 + 0.4 * (abs(x) / max(abs(min(display_pnl)), abs(max(display_pnl)))) for x in display_pnl]
-                                
-                                # Create bars with enhanced styling
+                                    
+                                # Create bars with enhanced styling - use uniform alpha
                                 x_labels = [f"${p:.0f}" for p in risk_results['price_impact']['scenarios']]
-                                bars = plt.bar(x_labels, display_pnl, color=colors, alpha=alpha_values, width=0.7)
-                                
+                                bars = plt.bar(x_labels, display_pnl, color=colors, alpha=0.7, width=0.7)
+
+                                # If you want varying alpha values, set them individually after creating the bars
+                                for i, bar in enumerate(bars):
+                                    # Calculate custom alpha value for this bar
+                                    if len(display_pnl) > 0:  # Prevent division by zero
+                                        max_abs_value = max(abs(min(display_pnl)), abs(max(display_pnl)))
+                                        if max_abs_value > 0:  # Another safety check
+                                            custom_alpha = 0.6 + 0.4 * (abs(display_pnl[i]) / max_abs_value)
+                                            bar.set_alpha(custom_alpha)
                                 plt.axhline(y=0, color='white', linestyle='-', alpha=0.3)
                                 plt.xlabel('Price Scenarios', fontsize=12)
                                 plt.ylabel('P&L ($)' if show_absolute_pnl else 'P&L Change ($)', fontsize=12)
@@ -3268,7 +3276,7 @@ def main():
                                     plt.grid(axis='y', alpha=0.3)
                                     
                                    
-                                    # Add markers for current vol
+                                    # Add markers for current vol - use volatility instead of current_vol
                                     current_vol_index = np.argmin(np.abs(np.array(risk_results['vol_impact']['scenarios']) - volatility))
                                     plt.axvline(x=current_vol_index, color='yellow', linestyle='--', alpha=0.5)
                                     plt.text(current_vol_index, plt.ylim()[0] * 0.9, 'Current',
@@ -3565,7 +3573,6 @@ def main():
                                 '1 Week Passes': risk_results['time_decay']['one_week_effect'],
                                 'Market Crash': risk_results['extreme_scenarios']['pnl_change']['market_crash_2008'] if 'market_crash_2008' in risk_results['extreme_scenarios']['pnl_change'] else 0
                             }
-                            
                             # Create horizontal bar chart for comparative view
                             impact_fig = plt.figure(figsize=(12, 7))
                             factor_names = list(impacts.keys())
