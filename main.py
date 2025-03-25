@@ -1640,10 +1640,10 @@ def analyze_vol_surface(local_vols, implied_vols, strikes, maturities, spot_pric
     return results
 
 # Risk Scenario Analysis
-def risk_scenario_analysis(strategy, current_price, strike_price, time_to_maturity,
-                         risk_free_rate, current_vol, pnl_function):
+def enhanced_risk_scenario_analysis(strategy, current_price, strike_price, time_to_maturity,
+                                  risk_free_rate, current_vol, pnl_function, call_value=0, put_value=0):
     """
-    Perform stress testing and scenario analysis for an option strategy
+    Perform comprehensive stress testing and scenario analysis for an option strategy
     
     Parameters:
     -----------
@@ -1653,80 +1653,253 @@ def risk_scenario_analysis(strategy, current_price, strike_price, time_to_maturi
         Current market parameters
     pnl_function : function
         Function to calculate strategy P&L
+    call_value, put_value : float
+        Current option values (used for accurate P&L calculation)
     
     Returns:
     --------
-    dict: Scenario analysis results
+    dict: Scenario analysis results with comprehensive metrics
     """
-    # Define scenarios
-    price_scenarios = np.array([0.85, 0.90, 0.95, 1.0, 1.05, 1.10, 1.15]) * current_price
-    vol_scenarios = np.array([0.7, 0.85, 1.0, 1.15, 1.3]) * current_vol
-    time_scenarios = np.array([1/252, 5/252, 10/252, 21/252]) # 1, 5, 10, 21 days
+    # Enhanced scenario definitions
+    price_scenarios = np.array([0.70, 0.80, 0.90, 0.95, 1.0, 1.05, 1.10, 1.20, 1.30]) * current_price
+    vol_scenarios = np.array([0.5, 0.75, 1.0, 1.25, 1.5, 2.0]) * current_vol
+    time_scenarios = np.array([0, 1/252, 5/252, 10/252, 21/252, 63/252, 126/252]) # 0, 1, 5, 10, 21, 63, 126 days
+    rate_scenarios = np.array([-0.01, -0.005, 0, 0.005, 0.01]) + risk_free_rate # Rate shifts
     
-    # Initialize results container
+    # Initialize expanded results container
     results = {
         'price_impact': {},
         'vol_impact': {},
         'time_decay': {},
+        'rate_impact': {},
+        'combined_scenarios': {},
         'extreme_scenarios': {}
     }
     
+    # Get current strategy value as baseline
+    baseline_pnl = pnl_function(strategy, np.array([current_price]), current_price, strike_price,
+                               time_to_maturity, risk_free_rate, current_vol, call_value, put_value)[0]
+    
     # Calculate P&L across price scenarios (keeping other factors constant)
     price_pnl = []
+    price_pnl_change = []
     for price in price_scenarios:
         spot_range = np.array([price])
         pnl = pnl_function(strategy, spot_range, current_price, strike_price,
-                            time_to_maturity, risk_free_rate, current_vol)[0]
+                          time_to_maturity, risk_free_rate, current_vol, call_value, put_value)[0]
         price_pnl.append(pnl)
+        price_pnl_change.append(pnl - baseline_pnl)  # Change from current P&L
+    
+    # Add price delta - how much P&L changes for each 1% move in price
+    price_delta = {}
+    for i, price in enumerate(price_scenarios):
+        if i > 0:  # Skip first entry to calculate change
+            price_percent_change = (price - price_scenarios[i-1]) / price_scenarios[i-1] * 100
+            pnl_change = price_pnl[i] - price_pnl[i-1]
+            price_delta[f"{price_scenarios[i-1]:.2f} to {price:.2f}"] = pnl_change / price_percent_change
     
     results['price_impact'] = {
         'scenarios': price_scenarios,
-        'pnl': price_pnl,
+        'absolute_pnl': price_pnl,
+        'pnl_change': price_pnl_change,
         'max_loss': min(price_pnl),
-        'max_gain': max(price_pnl)
+        'max_gain': max(price_pnl),
+        'price_delta': price_delta  # P&L change per 1% price move
     }
     
     # Calculate P&L across volatility scenarios
     vol_pnl = []
+    vol_pnl_change = []
     for vol in vol_scenarios:
         spot_range = np.array([current_price])
         pnl = pnl_function(strategy, spot_range, current_price, strike_price,
-                            time_to_maturity, risk_free_rate, vol)[0]
+                          time_to_maturity, risk_free_rate, vol, call_value, put_value)[0]
         vol_pnl.append(pnl)
+        vol_pnl_change.append(pnl - baseline_pnl)
+    
+    # Add vol delta - how much P&L changes for each 1 point move in vol
+    vol_delta = {}
+    for i, vol in enumerate(vol_scenarios):
+        if i > 0:  # Skip first entry to calculate change
+            vol_point_change = (vol - vol_scenarios[i-1]) * 100  # Convert to vol points (percentage points)
+            pnl_change = vol_pnl[i] - vol_pnl[i-1]
+            vol_delta[f"{vol_scenarios[i-1]*100:.1f}% to {vol*100:.1f}%"] = pnl_change / vol_point_change
     
     results['vol_impact'] = {
         'scenarios': vol_scenarios,
-        'pnl': vol_pnl,
+        'absolute_pnl': vol_pnl,
+        'pnl_change': vol_pnl_change,
         'max_loss': min(vol_pnl),
-        'max_gain': max(vol_pnl)
+        'max_gain': max(vol_pnl),
+        'vol_delta': vol_delta  # P&L change per 1 percentage point vol move
     }
     
     # Calculate time decay impact
     time_pnl = []
+    time_pnl_change = []
     for time_left in time_scenarios:
-        spot_range = np.array([current_price])
-        pnl = pnl_function(strategy, spot_range, current_price, strike_price,
-                            time_left, risk_free_rate, current_vol)[0]
+        # Handle expired option case
+        if time_left <= 0:
+            # For zero time remaining, calculate expiration value based on strategy type
+            if strategy == "Long Call":
+                pnl = max(0, current_price - strike_price) - call_value
+            elif strategy == "Long Put":
+                pnl = max(0, strike_price - current_price) - put_value
+            elif strategy == "Covered Call Writing":
+                pnl = current_price - current_price + max(0, -1 * (current_price - strike_price)) + call_value
+            elif strategy == "Protective Put":
+                pnl = current_price - current_price + max(0, strike_price - current_price) - put_value
+            elif "Bull Call Spread" in strategy:
+                # For a bull call spread, approximate using lower and upper strikes
+                lower_strike = strike_price * 0.9
+                upper_strike = strike_price * 1.1
+                pnl = max(0, min(current_price - lower_strike, upper_strike - lower_strike)) - call_value
+            elif "Bear Put Spread" in strategy:
+                # For a bear put spread, approximate using lower and upper strikes
+                lower_strike = strike_price * 0.9
+                upper_strike = strike_price * 1.1
+                pnl = max(0, min(upper_strike - current_price, upper_strike - lower_strike)) - put_value
+            else:
+                # For other strategies, use the PnL function with tiny time
+                spot_range = np.array([current_price])
+                pnl = pnl_function(strategy, spot_range, current_price, strike_price,
+                                  0.00001, risk_free_rate, current_vol, call_value, put_value)[0]
+        else:
+            spot_range = np.array([current_price])
+            pnl = pnl_function(strategy, spot_range, current_price, strike_price,
+                              time_left, risk_free_rate, current_vol, call_value, put_value)[0]
+        
         time_pnl.append(pnl)
+        time_pnl_change.append(pnl - baseline_pnl)
+    
+    # Calculate daily decay rate for different periods
+    daily_decay_rates = {}
+    for i in range(1, len(time_scenarios)-1):
+        days_diff = (time_scenarios[i+1] - time_scenarios[i]) * 252  # Convert to days
+        if days_diff > 0:
+            daily_rate = (time_pnl[i+1] - time_pnl[i]) / days_diff
+            period_name = f"{int(time_scenarios[i]*252)} to {int(time_scenarios[i+1]*252)} days"
+            daily_decay_rates[period_name] = daily_rate
     
     results['time_decay'] = {
-        'scenarios': time_scenarios,
-        'pnl': time_pnl,
-        'effect': time_pnl[0] - time_pnl[-1]  # P&L difference between 1 day and 21 days
+        'scenarios': time_scenarios * 252,  # Convert to days for readability
+        'absolute_pnl': time_pnl,
+        'pnl_change': time_pnl_change,
+        'daily_decay_rates': daily_decay_rates,
+        'one_day_effect': (time_pnl[1] - time_pnl[0]) if len(time_pnl) > 1 else 0,
+        'one_week_effect': (time_pnl[3] - time_pnl[0]) if len(time_pnl) > 3 else 0,
+        'one_month_effect': (time_pnl[4] - time_pnl[0]) if len(time_pnl) > 4 else 0
     }
     
-    # Extreme scenarios
+    # Calculate interest rate impact
+    rate_pnl = []
+    rate_pnl_change = []
+    for rate in rate_scenarios:
+        spot_range = np.array([current_price])
+        pnl = pnl_function(strategy, spot_range, current_price, strike_price,
+                          time_to_maturity, rate, current_vol, call_value, put_value)[0]
+        rate_pnl.append(pnl)
+        rate_pnl_change.append(pnl - baseline_pnl)
+    
+    results['rate_impact'] = {
+        'scenarios': rate_scenarios * 100,  # Convert to percentage for readability
+        'absolute_pnl': rate_pnl,
+        'pnl_change': rate_pnl_change,
+        'max_loss': min(rate_pnl),
+        'max_gain': max(rate_pnl)
+    }
+    
+    # Combined scenarios - major market events
+    combined_scenarios = {
+        'current': baseline_pnl,
+        'market_crash_high_vol': pnl_function(strategy, np.array([current_price * 0.8]), current_price,
+                                           strike_price, time_to_maturity, risk_free_rate - 0.005, current_vol * 1.8,
+                                           call_value, put_value)[0],
+        'market_rally_low_vol': pnl_function(strategy, np.array([current_price * 1.15]), current_price,
+                                          strike_price, time_to_maturity, risk_free_rate + 0.005, current_vol * 0.7,
+                                          call_value, put_value)[0],
+        'flat_price_high_vol': pnl_function(strategy, np.array([current_price]), current_price,
+                                          strike_price, time_to_maturity, risk_free_rate, current_vol * 1.5,
+                                          call_value, put_value)[0],
+        'flat_price_low_vol': pnl_function(strategy, np.array([current_price]), current_price,
+                                         strike_price, time_to_maturity, risk_free_rate, current_vol * 0.6,
+                                         call_value, put_value)[0]
+    }
+    
+    # Calculate changes from baseline for combined scenarios
+    combined_scenario_changes = {k: v - baseline_pnl for k, v in combined_scenarios.items() if k != 'current'}
+    
+    results['combined_scenarios'] = {
+        'absolute_pnl': combined_scenarios,
+        'pnl_change': combined_scenario_changes
+    }
+    
+    # Extreme stress scenarios - historical crisis patterns
     extreme_scenarios = {
-        'market_crash': pnl_function(strategy, np.array([current_price * 0.8]), current_price,
-                                    strike_price, time_to_maturity, risk_free_rate, current_vol * 1.5)[0],
-        'market_rally': pnl_function(strategy, np.array([current_price * 1.2]), current_price,
-                                    strike_price, time_to_maturity, risk_free_rate, current_vol * 1.3)[0],
-        'vol_explosion': pnl_function(strategy, np.array([current_price]), current_price,
-                                     strike_price, time_to_maturity, risk_free_rate, current_vol * 2.0)[0],
-        'vol_collapse': pnl_function(strategy, np.array([current_price]), current_price,
-                                    strike_price, time_to_maturity, risk_free_rate, current_vol * 0.5)[0]
+        'market_crash_2008': pnl_function(strategy, np.array([current_price * 0.65]), current_price,
+                                        strike_price, time_to_maturity, risk_free_rate - 0.01, current_vol * 3.0,
+                                        call_value, put_value)[0],
+        'flash_crash': pnl_function(strategy, np.array([current_price * 0.9]), current_price,
+                                   strike_price, time_to_maturity, risk_free_rate, current_vol * 2.5,
+                                   call_value, put_value)[0],
+        'covid_crash': pnl_function(strategy, np.array([current_price * 0.7]), current_price,
+                                  strike_price, time_to_maturity, risk_free_rate - 0.005, current_vol * 2.0,
+                                  call_value, put_value)[0],
+        'tech_bubble_burst': pnl_function(strategy, np.array([current_price * 0.75]), current_price,
+                                        strike_price, time_to_maturity, risk_free_rate - 0.005, current_vol * 1.7,
+                                        call_value, put_value)[0],
+        'black_monday': pnl_function(strategy, np.array([current_price * 0.6]), current_price,
+                                    strike_price, time_to_maturity, risk_free_rate, current_vol * 3.5,
+                                    call_value, put_value)[0]
     }
     
+    # Calculate changes from baseline for extreme scenarios
+    extreme_scenario_changes = {k: v - baseline_pnl for k, v in extreme_scenarios.items()}
+    
+    results['extreme_scenarios'] = {
+        'absolute_pnl': extreme_scenarios,
+        'pnl_change': extreme_scenario_changes
+    }
+    
+    # Add strategy risk profile summary
+    price_sensitivity = np.mean([abs(d) for d in price_delta.values()]) if price_delta else 0
+    vol_sensitivity = np.mean([abs(d) for d in vol_delta.values()]) if vol_delta else 0
+    time_sensitivity = abs(results['time_decay']['one_day_effect']) if 'one_day_effect' in results['time_decay'] else 0
+    
+    results['risk_profile'] = {
+        'price_sensitivity': price_sensitivity,  # Average P&L change per 1% price move
+        'vol_sensitivity': vol_sensitivity,     # Average P&L change per 1% vol move
+        'time_sensitivity': time_sensitivity,   # P&L change for 1 day passing
+        'current_pnl': baseline_pnl,
+        'strategy': strategy
+    }
+    
+    # Calculate risk-reward metrics
+    max_pnl_all = max([
+        max(price_pnl) if price_pnl else -np.inf,
+        max(vol_pnl) if vol_pnl else -np.inf,
+        max(time_pnl) if time_pnl else -np.inf,
+        max(rate_pnl) if rate_pnl else -np.inf
+    ])
+    
+    min_pnl_all = min([
+        min(price_pnl) if price_pnl else np.inf,
+        min(vol_pnl) if vol_pnl else np.inf,
+        min(time_pnl) if time_pnl else np.inf,
+        min(rate_pnl) if rate_pnl else np.inf
+    ])
+    
+    # Worst-case from extreme scenarios
+    extreme_min = min(extreme_scenarios.values()) if extreme_scenarios else np.inf
+    
+    results['risk_metrics'] = {
+        'max_potential_gain': max_pnl_all - baseline_pnl,
+        'max_potential_loss': baseline_pnl - min_pnl_all,
+        'worst_case_loss': baseline_pnl - extreme_min if extreme_min != np.inf else 0,
+        'risk_reward_ratio': (max_pnl_all - baseline_pnl) / (baseline_pnl - min_pnl_all) if (baseline_pnl - min_pnl_all) > 0 else 0
+    }
+    
+    return results
     results['extreme_scenarios'] = extreme_scenarios
     
     return results
@@ -2973,7 +3146,8 @@ def main():
                                     st.pyplot(fig)
                                 except Exception as e:
                                     st.error(f"Error processing stress test results: {str(e)}")
-            
+                                
+
             elif quant_tool == "Risk Scenario Analysis":
                 st.subheader("Strategy Scenario Analysis")
                 
@@ -2981,49 +3155,455 @@ def main():
                               "Bull Call Spread", "Bear Put Spread", "Long Straddle", "Iron Condor"]
                 selected_strategy = st.selectbox("Select Strategy for Analysis", strategy_list)
                 
+                # Add advanced options
+                with st.expander("Advanced Analysis Options"):
+                    show_absolute_pnl = st.checkbox("Show Absolute P&L Values", True,
+                                                 help="If unchecked, shows P&L changes from current position value")
+                    
+                    visualization_mode = st.radio("Visualization Mode",
+                                                ["Basic", "Comprehensive", "Risk Profile"],
+                                                help="Basic: Key charts only\nComprehensive: All analysis charts\nRisk Profile: Summary view")
+                    
+                    num_scenarios = st.select_slider("Number of scenarios",
+                                                   options=[5, 7, 9, 11],
+                                                   value=7,
+                                                   help="More scenarios give finer granularity but may be harder to read")
+                
                 if st.button("Run Scenario Analysis"):
                     with st.spinner("Running scenario analysis..."):
-                        risk_results = risk_scenario_analysis(
+                        # Get current option values for accurate P&L calculation
+                        current_call = black_scholes_calc(current_price, strike_price, time_to_maturity, risk_free_rate, volatility, 'call')
+                        current_put = black_scholes_calc(current_price, strike_price, time_to_maturity, risk_free_rate, volatility, 'put')
+                        
+                        # Run enhanced risk analysis
+                        risk_results = enhanced_risk_scenario_analysis(
                             selected_strategy, current_price, strike_price, time_to_maturity,
-                            risk_free_rate, volatility, calculate_strategy_pnl
+                            risk_free_rate, volatility, calculate_strategy_pnl,
+                            call_value=current_call, put_value=current_put
                         )
                         
-                        # Display price impact
-                        st.subheader("Price Impact Scenarios")
-                        price_fig = plt.figure(figsize=(10, 5))
-                        bars = plt.bar(
-                            [f"{p:.0f}" for p in risk_results['price_impact']['scenarios']],
-                            risk_results['price_impact']['pnl'],
-                            color=['red' if x < 0 else 'green' for x in risk_results['price_impact']['pnl']]
-                        )
-                        plt.axhline(y=0, color='white', linestyle='-', alpha=0.3)
-                        plt.xlabel('Price Scenarios')
-                        plt.ylabel('P&L')
-                        plt.title('Price Impact on P&L')
+                        # Display analysis based on selected mode
+                        if visualization_mode == "Basic" or visualization_mode == "Comprehensive":
+                            # Display price impact
+                            st.subheader("Price Impact Scenarios")
+                            col1, col2 = st.columns([3, 1])
+                            
+                            with col1:
+                                # Create more informative price impact chart
+                                price_fig = plt.figure(figsize=(12, 6))
+                                
+                                # Determine which P&L values to show based on user selection
+                                display_pnl = risk_results['price_impact']['absolute_pnl'] if show_absolute_pnl else risk_results['price_impact']['pnl_change']
+                                
+                                # Create color gradient based on values
+                                colors = ['#FF4136' if x < 0 else '#2ECC40' for x in display_pnl]
+                                alpha_values = [0.6 + 0.4 * (abs(x) / max(abs(min(display_pnl)), abs(max(display_pnl)))) for x in display_pnl]
+                                
+                                # Create bars with enhanced styling
+                                x_labels = [f"${p:.0f}" for p in risk_results['price_impact']['scenarios']]
+                                bars = plt.bar(x_labels, display_pnl, color=colors, alpha=alpha_values, width=0.7)
+                                
+                                plt.axhline(y=0, color='white', linestyle='-', alpha=0.3)
+                                plt.xlabel('Price Scenarios', fontsize=12)
+                                plt.ylabel('P&L ($)' if show_absolute_pnl else 'P&L Change ($)', fontsize=12)
+                                plt.title(f'Price Impact on {selected_strategy} P&L', fontsize=14, fontweight='bold')
+                                plt.grid(axis='y', alpha=0.3)
+                                
+                                # Add more informative labels
+                                plt.xticks(rotation=45, ha='right')
+                                current_price_index = np.argmin(abs(risk_results['price_impact']['scenarios'] - current_price))
+                                if current_price_index < len(x_labels):
+                                    plt.axvline(x=current_price_index, color='yellow', linestyle='--', alpha=0.5)
+                                    plt.text(current_price_index, plt.ylim()[0] * 0.9, 'Current',
+                                           rotation=90, va='bottom', color='yellow', alpha=0.7)
+                                
+                                # Add values on top of bars with better positioning
+                                for bar in bars:
+                                    height = bar.get_height()
+                                    plt.text(bar.get_x() + bar.get_width()/2,
+                                           height + (0.01 * max(display_pnl) if height > 0 else 0.01 * min(display_pnl)),
+                                           f'${height:.2f}',
+                                           ha='center', va='bottom' if height > 0 else 'top',
+                                           color='white', fontweight='bold')
+                                
+                                plt.tight_layout()
+                                st.pyplot(price_fig)
+                            
+                            with col2:
+                                # Display price sensitivity metrics
+                                st.markdown("### Price Sensitivity")
+                                st.markdown(f"""
+                                    <div style="background-color: #1E1E1E; padding: 15px; border-radius: 10px;">
+                                        <ul style="color: white; list-style-type: none; padding-left: 0;">
+                                            <li>• Max Gain: <span style="color: #2ECC40">${risk_results['price_impact']['max_gain']:.2f}</span></li>
+                                            <li>• Max Loss: <span style="color: #FF4136">${risk_results['price_impact']['max_loss']:.2f}</span></li>
+                                            <li>• P&L per 1% price move: ${risk_results['risk_profile']['price_sensitivity']:.2f}</li>
+                                        </ul>
+                                    </div>
+                                """, unsafe_allow_html=True)
+                            
+                            # Volatility impact
+                            if visualization_mode == "Comprehensive":
+                                st.subheader("Volatility Impact Scenarios")
+                                col1, col2 = st.columns([3, 1])
+                                
+                                with col1:
+                                    # Create volatility impact chart
+                                    vol_fig = plt.figure(figsize=(12, 6))
+                                    
+                                    # Determine which P&L values to show based on user selection
+                                    display_pnl = risk_results['vol_impact']['absolute_pnl'] if show_absolute_pnl else risk_results['vol_impact']['pnl_change']
+                                    
+                                    # Create color gradient based on values
+                                    colors = ['#FF4136' if x < 0 else '#2ECC40' for x in display_pnl]
+                                    
+                                    # Create bars with enhanced styling
+                                    x_labels = [f"{v*100:.0f}%" for v in risk_results['vol_impact']['scenarios']]
+                                    bars = plt.bar(x_labels, display_pnl, color=colors, width=0.7)
+                                    
+                                    plt.axhline(y=0, color='white', linestyle='-', alpha=0.3)
+                                    plt.xlabel('Volatility Scenarios', fontsize=12)
+                                    plt.ylabel('P&L ($)' if show_absolute_pnl else 'P&L Change ($)', fontsize=12)
+                                    plt.title(f'Volatility Impact on {selected_strategy} P&L', fontsize=14, fontweight='bold')
+                                    plt.grid(axis='y', alpha=0.3)
+                                    
+                                    # Add markers for current vol
+                                    current_vol_index = 2  # Assuming index 2 is the current vol (1.0 multiplier)
+                                    plt.axvline(x=current_vol_index, color='yellow', linestyle='--', alpha=0.5)
+                                    plt.text(current_vol_index, plt.ylim()[0] * 0.9, 'Current',
+                                           rotation=90, va='bottom', color='yellow', alpha=0.7)
+                                    
+                                    # Add values on bars
+                                    for bar in bars:
+                                        height = bar.get_height()
+                                        plt.text(bar.get_x() + bar.get_width()/2,
+                                               height + (0.01 * max(display_pnl) if height > 0 else 0.01 * min(display_pnl)),
+                                               f'${height:.2f}',
+                                               ha='center', va='bottom' if height > 0 else 'top',
+                                               color='white', fontweight='bold')
+                                    
+                                    plt.tight_layout()
+                                    st.pyplot(vol_fig)
+                                
+                                with col2:
+                                    # Display vol sensitivity metrics
+                                    st.markdown("### Volatility Sensitivity")
+                                    st.markdown(f"""
+                                        <div style="background-color: #1E1E1E; padding: 15px; border-radius: 10px;">
+                                            <ul style="color: white; list-style-type: none; padding-left: 0;">
+                                                <li>• Max Gain: <span style="color: #2ECC40">${risk_results['vol_impact']['max_gain']:.2f}</span></li>
+                                                <li>• Max Loss: <span style="color: #FF4136">${risk_results['vol_impact']['max_loss']:.2f}</span></li>
+                                                <li>• P&L per 1% vol change: ${risk_results['risk_profile']['vol_sensitivity']:.2f}</li>
+                                            </ul>
+                                        </div>
+                                    """, unsafe_allow_html=True)
+                                
+                                # Time decay impact
+                                st.subheader("Time Decay Analysis")
+                                col1, col2 = st.columns([3, 1])
+                                
+                                with col1:
+                                    # Create time decay chart
+                                    time_fig = plt.figure(figsize=(12, 6))
+                                    
+                                    # Determine which P&L values to show
+                                    display_pnl = risk_results['time_decay']['absolute_pnl'] if show_absolute_pnl else risk_results['time_decay']['pnl_change']
+                                    
+                                    # Use line chart for time decay visualization
+                                    plt.plot(risk_results['time_decay']['scenarios'], display_pnl, 'o-',
+                                           color='#FF851B', linewidth=2, markersize=8)
+                                    
+                                    plt.axhline(y=0, color='white', linestyle='-', alpha=0.3)
+                                    plt.xlabel('Days to Expiration', fontsize=12)
+                                    plt.ylabel('P&L ($)' if show_absolute_pnl else 'P&L Change ($)', fontsize=12)
+                                    plt.title(f'Time Decay Effect on {selected_strategy} P&L', fontsize=14, fontweight='bold')
+                                    plt.grid(True, alpha=0.3)
+                                    
+                                    # Add current time marker
+                                    current_time = time_to_maturity * 252  # Convert to days
+                                    plt.axvline(x=current_time, color='yellow', linestyle='--', alpha=0.5)
+                                    plt.text(current_time, plt.ylim()[0] * 0.9, 'Current',
+                                           rotation=90, va='bottom', color='yellow', alpha=0.7)
+                                    
+                                    # Add value labels at key points
+                                    for i, (x, y) in enumerate(zip(risk_results['time_decay']['scenarios'], display_pnl)):
+                                        if i % 2 == 0 or i == len(display_pnl) - 1:  # Label every other point to avoid crowding
+                                            plt.text(x, y + (0.02 * max(display_pnl) if y > 0 else 0.02 * min(display_pnl)),
+                                                   f'${y:.2f}',
+                                                   ha='center', va='bottom',
+                                                   color='white', fontweight='bold')
+                                    
+                                    plt.tight_layout()
+                                    st.pyplot(time_fig)
+                                
+                                with col2:
+                                    # Display time decay metrics
+                                    st.markdown("### Time Decay Metrics")
+                                    st.markdown(f"""
+                                        <div style="background-color: #1E1E1E; padding: 15px; border-radius: 10px;">
+                                            <ul style="color: white; list-style-type: none; padding-left: 0;">
+                                                <li>• Daily Theta: <span style="${'color: #2ECC40' if risk_results['time_decay']['one_day_effect'] > 0 else 'color: #FF4136'}">${risk_results['time_decay']['one_day_effect']:.2f}</span></li>
+                                                <li>• Weekly Effect: <span style="${'color: #2ECC40' if risk_results['time_decay']['one_week_effect'] > 0 else 'color: #FF4136'}">${risk_results['time_decay']['one_week_effect']:.2f}</span></li>
+                                                <li>• Monthly Effect: <span style="${'color: #2ECC40' if risk_results['time_decay']['one_month_effect'] > 0 else 'color: #FF4136'}">${risk_results['time_decay']['one_month_effect']:.2f}</span></li>
+                                            </ul>
+                                        </div>
+                                    """, unsafe_allow_html=True)
+                            
+                            # Display extreme scenarios
+                            st.subheader("Market Stress Scenarios")
+                            
+                            # Process extreme scenario data
+                            scenario_names = list(risk_results['extreme_scenarios']['absolute_pnl'].keys())
+                            scenario_values = list(risk_results['extreme_scenarios']['absolute_pnl'].values())
+                            
+                            # Create DataFrame for visualization
+                            stress_df = pd.DataFrame({
+                                'Scenario': scenario_names,
+                                'P&L': scenario_values
+                            })
+                            
+                            # Sort by severity of impact
+                            stress_df = stress_df.sort_values('P&L')
+                            
+                            # Create bar chart of stress test results
+                            stress_fig = plt.figure(figsize=(12, 7))
+                            bars = plt.bar(
+                                stress_df["Scenario"],
+                                stress_df["P&L"],
+                                color=['#FF5555' if x < 0 else '#55CC55' for x in stress_df["P&L"]],
+                                width=0.7
+                            )
+                            plt.axhline(y=0, color='white', linestyle='-', alpha=0.3)
+                            plt.ylabel('P&L ($)', fontsize=12)
+                            plt.xlabel('Scenario', fontsize=12)
+                            plt.title('Stress Test Results', fontsize=14, fontweight='bold')
+                            plt.xticks(rotation=30, ha='right', fontsize=10)
+                            plt.grid(axis='y', alpha=0.3)
+                            
+                            # Add values on top of bars with better positioning
+                            for bar in bars:
+                                height = bar.get_height()
+                                y_pos = min(-0.7, height - 0.5) if height < 0 else max(0.3, height + 0.5)
+                                plt.text(
+                                    bar.get_x() + bar.get_width()/2,
+                                    y_pos,
+                                    f'${height:.2f}',
+                                    ha='center',
+                                    va='bottom' if height >= 0 else 'top',
+                                    color='white',
+                                    fontweight='bold',
+                                    fontsize=11
+                                )
+                            
+                            # Add current price marker
+                            current_index = stress_df[stress_df["Scenario"] == "current"].index
+                            if len(current_index) > 0:
+                                current_idx = current_index[0]
+                                plt.axvline(x=current_idx, color='yellow', linestyle='--', alpha=0.5)
+                                plt.text(current_idx, plt.ylim()[0] * 0.9, 'Current',
+                                       rotation=90, va='bottom', color='yellow', alpha=0.7)
+                            
+                            plt.tight_layout(pad=2)
+                            st.pyplot(stress_fig)
                         
-                        # Add values on top of bars
-                        for bar in bars:
-                            height = bar.get_height()
-                            plt.text(bar.get_x() + bar.get_width()/2., height,
-                                  f'${height:.2f}',
-                                  ha='center', va='bottom' if height > 0 else 'top',
-                                  color='white')
-                        
-                        st.pyplot(price_fig)
-                        
-                        # Display extreme scenarios
-                        st.subheader("Extreme Market Scenarios")
-                        st.markdown(f"""
-                            <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
-                                <h4 style="color: white;">Extreme Scenario P&L Impact</h4>
-                                <ul style="color: white; list-style-type: none; padding-left: 0;">
-                                    <li>• Market Crash (-20%): ${risk_results['extreme_scenarios']['market_crash']:.2f}</li>
-                                    <li>• Market Rally (+20%): ${risk_results['extreme_scenarios']['market_rally']:.2f}</li>
-                                    <li>• Volatility Explosion (2x): ${risk_results['extreme_scenarios']['vol_explosion']:.2f}</li>
-                                    <li>• Volatility Collapse (0.5x): ${risk_results['extreme_scenarios']['vol_collapse']:.2f}</li>
-                                </ul>
-                            </div>
-                        """, unsafe_allow_html=True)
+                        # Risk Profile Summary
+                        if visualization_mode == "Risk Profile" or visualization_mode == "Comprehensive":
+                            st.subheader(f"Risk Profile Summary for {selected_strategy}")
+                            
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                # Current position metrics
+                                st.markdown("### Position Status")
+                                st.markdown(f"""
+                                    <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
+                                        <ul style="color: white; list-style-type: none; padding-left: 0;">
+                                            <li>• Current Price: ${current_price:.2f}</li>
+                                            <li>• Strike Price: ${strike_price:.2f}</li>
+                                            <li>• Days to Expiry: {time_to_maturity*252:.0f}</li>
+                                            <li>• Volatility: {volatility*100:.1f}%</li>
+                                            <li>• Current P&L: ${risk_results['risk_profile']['current_pnl']:.2f}</li>
+                                        </ul>
+                                    </div>
+                                """, unsafe_allow_html=True)
+                            
+                            with col2:
+                                # Risk sensitivity summary
+                                st.markdown("### Risk Sensitivities")
+                                
+                                # Normalize sensitivities for visual comparison (0-100 scale)
+                                sensitivities = {
+                                    'Price': risk_results['risk_profile']['price_sensitivity'],
+                                    'Volatility': risk_results['risk_profile']['vol_sensitivity'],
+                                    'Time': risk_results['risk_profile']['time_sensitivity']
+                                }
+                                
+                                max_sensitivity = max(sensitivities.values()) if any(sensitivities.values()) else 1
+                                normalized = {k: (v / max_sensitivity) * 100 for k, v in sensitivities.items()}
+                                
+                                # Create sensitivity visualization
+                                st.markdown(f"""
+                                    <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
+                                        <p style="color: white;">Price Sensitivity: ${sensitivities['Price']:.2f} per 1%</p>
+                                        <div style="background-color: #333; width: 100%; height: 20px; border-radius: 10px; overflow: hidden;">
+                                            <div style="background-color: #3498db; width: {normalized['Price']}%; height: 100%;"></div>
+                                        </div>
+                                        <p style="color: white; margin-top: 15px;">Volatility Sensitivity: ${sensitivities['Volatility']:.2f} per 1%</p>
+                                        <div style="background-color: #333; width: 100%; height: 20px; border-radius: 10px; overflow: hidden;">
+                                            <div style="background-color: #9b59b6; width: {normalized['Volatility']}%; height: 100%;"></div>
+                                        </div>
+                                        <p style="color: white; margin-top: 15px;">Time Sensitivity: ${sensitivities['Time']:.2f} per day</p>
+                                        <div style="background-color: #333; width: 100%; height: 20px; border-radius: 10px; overflow: hidden;">
+                                            <div style="background-color: #e67e22; width: {normalized['Time']}%; height: 100%;"></div>
+                                        </div>
+                                    </div>
+                                """, unsafe_allow_html=True)
+                            
+                            # Risk-reward metrics
+                            st.subheader("Risk-Reward Analysis")
+                            
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                # Risk metrics
+                                st.markdown("### Potential Outcomes")
+                                st.markdown(f"""
+                                    <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
+                                        <ul style="color: white; list-style-type: none; padding-left: 0;">
+                                            <li>• Maximum Potential Gain: <span style="color: #2ECC40">${risk_results['risk_metrics']['max_potential_gain']:.2f}</span></li>
+                                            <li>• Maximum Potential Loss: <span style="color: #FF4136">${risk_results['risk_metrics']['max_potential_loss']:.2f}</span></li>
+                                            <li>• Worst-Case Scenario Loss: <span style="color: #FF4136">${risk_results['risk_metrics']['worst_case_loss']:.2f}</span></li>
+                                            <li>• Risk-Reward Ratio: {risk_results['risk_metrics']['risk_reward_ratio']:.2f}</li>
+                                        </ul>
+                                    </div>
+                                """, unsafe_allow_html=True)
+                            
+                            with col2:
+                                # Risk guidance based on the strategy
+                                risk_profile = ""
+                                
+                                if "Call" in selected_strategy and "Long" in selected_strategy:
+                                    risk_profile = """
+                                    <p><strong>Long Call Risk Profile:</strong></p>
+                                    <ul>
+                                        <li>Benefits from price increases and rising volatility</li>
+                                        <li>Suffers from time decay and price decreases</li>
+                                        <li>Maximum loss limited to premium paid</li>
+                                        <li>Consider taking profits if large price increases occur</li>
+                                    </ul>
+                                    """
+                                elif "Put" in selected_strategy and "Long" in selected_strategy:
+                                    risk_profile = """
+                                    <p><strong>Long Put Risk Profile:</strong></p>
+                                    <ul>
+                                        <li>Benefits from price decreases and rising volatility</li>
+                                        <li>Suffers from time decay and price increases</li>
+                                        <li>Maximum loss limited to premium paid</li>
+                                        <li>Can be used as portfolio insurance</li>
+                                    </ul>
+                                    """
+                                elif "Covered Call" in selected_strategy:
+                                    risk_profile = """
+                                    <p><strong>Covered Call Risk Profile:</strong></p>
+                                    <ul>
+                                        <li>Benefits from moderate price increases and time decay</li>
+                                        <li>Suffers from large price increases (opportunity cost)</li>
+                                        <li>Offers partial protection against price decreases</li>
+                                        <li>Best for sideways or slightly bullish markets</li>
+                                    </ul>
+                                    """
+                                elif "Protective Put" in selected_strategy:
+                                    risk_profile = """
+                                    <p><strong>Protective Put Risk Profile:</strong></p>
+                                    <ul>
+                                        <li>Benefits from price increases while limiting downside risk</li>
+                                        <li>Suffers from time decay and high volatility premium</li>
+                                        <li>Acts as insurance for long stock positions</li>
+                                        <li>Consider rolling to further dates if protection still needed</li>
+                                    </ul>
+                                    """
+                                elif "Spread" in selected_strategy:
+                                    risk_profile = """
+                                    <p><strong>Spread Strategy Risk Profile:</strong></p>
+                                    <ul>
+                                        <li>Benefits from price movement in expected direction</li>
+                                        <li>Lower cost and risk than outright options</li>
+                                        <li>Defined maximum profit and loss</li>
+                                        <li>Best to exit if price moves strongly against position</li>
+                                    </ul>
+                                    """
+                                elif "Straddle" in selected_strategy:
+                                    risk_profile = """
+                                    <p><strong>Straddle Risk Profile:</strong></p>
+                                    <ul>
+                                        <li>Benefits from large price movements in either direction</li>
+                                        <li>Suffers from time decay if price remains stable</li>
+                                        <li>Increased volatility is positive for this position</li>
+                                        <li>Consider taking profits if large price move occurs</li>
+                                    </ul>
+                                    """
+                                
+                                st.markdown(f"""
+                                    <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px;">
+                                        <h4 style="color: white;">Strategy Guidance</h4>
+                                        <div style="color: white;">
+                                            {risk_profile}
+                                        </div>
+                                    </div>
+                                """, unsafe_allow_html=True)
+                            
+                            # Add a comparison view of all impacts
+                            st.subheader("Comparative Risk Sensitivities")
+                            
+                            # Create a unified view of main sensitivities
+                            impacts = {
+                                'Price +10%': risk_results['price_impact']['pnl_change'][np.where(risk_results['price_impact']['scenarios'] >= current_price * 1.1)[0][0]] if any(risk_results['price_impact']['scenarios'] >= current_price * 1.1) else 0,
+                                'Price -10%': risk_results['price_impact']['pnl_change'][np.where(risk_results['price_impact']['scenarios'] <= current_price * 0.9)[0][-1]] if any(risk_results['price_impact']['scenarios'] <= current_price * 0.9) else 0,
+                                'Vol +50%': risk_results['vol_impact']['pnl_change'][np.where(risk_results['vol_impact']['scenarios'] >= current_vol * 1.5)[0][0]] if any(risk_results['vol_impact']['scenarios'] >= current_vol * 1.5) else 0,
+                                'Vol -50%': risk_results['vol_impact']['pnl_change'][np.where(risk_results['vol_impact']['scenarios'] <= current_vol * 0.5)[0][-1]] if any(risk_results['vol_impact']['scenarios'] <= current_vol * 0.5) else 0,
+                                '1 Week Passes': risk_results['time_decay']['one_week_effect'],
+                                'Market Crash': risk_results['extreme_scenarios']['pnl_change']['market_crash_2008'] if 'market_crash_2008' in risk_results['extreme_scenarios']['pnl_change'] else 0
+                            }
+                            
+                            # Create horizontal bar chart for comparative view
+                            impact_fig = plt.figure(figsize=(12, 7))
+                            factor_names = list(impacts.keys())
+                            impact_values = list(impacts.values())
+                            
+                            # Sort by absolute impact
+                            sorted_indices = np.argsort(np.abs(impact_values))[::-1]
+                            factor_names = [factor_names[i] for i in sorted_indices]
+                            impact_values = [impact_values[i] for i in sorted_indices]
+                            
+                            # Create horizontal bars
+                            bars = plt.barh(
+                                factor_names,
+                                impact_values,
+                                color=['#2ECC40' if x > 0 else '#FF4136' for x in impact_values],
+                                height=0.6
+                            )
+                            
+                            plt.axvline(x=0, color='white', linestyle='-', alpha=0.3)
+                            plt.xlabel('P&L Impact ($)', fontsize=12)
+                            plt.title('Comparative Risk Factor Impacts', fontsize=14, fontweight='bold')
+                            plt.grid(axis='x', alpha=0.3)
+                            
+                            # Add values to bars
+                            for bar in bars:
+                                width = bar.get_width()
+                                x_pos = width + (0.01 * max(impact_values) if width > 0 else 0.01 * min(impact_values))
+                                plt.text(
+                                    x_pos,
+                                    bar.get_y() + bar.get_height()/2,
+                                    f'${width:.2f}',
+                                    va='center',
+                                    color='white',
+                                    fontweight='bold',
+                                    fontsize=10
+                                )
+                            
+                            plt.tight_layout()
+                            st.pyplot(impact_fig)
 
     except Exception as e:
         st.error(f"An error occurred: {str(e)}")
