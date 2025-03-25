@@ -3267,8 +3267,9 @@ def main():
                                     plt.title(f'Volatility Impact on {selected_strategy} P&L', fontsize=14, fontweight='bold')
                                     plt.grid(axis='y', alpha=0.3)
                                     
+                                   
                                     # Add markers for current vol
-                                    current_vol_index = 2  # Assuming index 2 is the current vol (1.0 multiplier)
+                                    current_vol_index = np.argmin(np.abs(np.array(risk_results['vol_impact']['scenarios']) - volatility))
                                     plt.axvline(x=current_vol_index, color='yellow', linestyle='--', alpha=0.5)
                                     plt.text(current_vol_index, plt.ylim()[0] * 0.9, 'Current',
                                            rotation=90, va='bottom', color='yellow', alpha=0.7)
@@ -3559,8 +3560,8 @@ def main():
                             impacts = {
                                 'Price +10%': risk_results['price_impact']['pnl_change'][np.where(risk_results['price_impact']['scenarios'] >= current_price * 1.1)[0][0]] if any(risk_results['price_impact']['scenarios'] >= current_price * 1.1) else 0,
                                 'Price -10%': risk_results['price_impact']['pnl_change'][np.where(risk_results['price_impact']['scenarios'] <= current_price * 0.9)[0][-1]] if any(risk_results['price_impact']['scenarios'] <= current_price * 0.9) else 0,
-                                'Vol +50%': risk_results['vol_impact']['pnl_change'][np.where(risk_results['vol_impact']['scenarios'] >= current_vol * 1.5)[0][0]] if any(risk_results['vol_impact']['scenarios'] >= current_vol * 1.5) else 0,
-                                'Vol -50%': risk_results['vol_impact']['pnl_change'][np.where(risk_results['vol_impact']['scenarios'] <= current_vol * 0.5)[0][-1]] if any(risk_results['vol_impact']['scenarios'] <= current_vol * 0.5) else 0,
+                                'Vol +50%': risk_results['vol_impact']['pnl_change'][np.where(risk_results['vol_impact']['scenarios'] >= volatility * 1.5)[0][0]] if any(risk_results['vol_impact']['scenarios'] >= volatility * 1.5) else 0,
+                                'Vol -50%': risk_results['vol_impact']['pnl_change'][np.where(risk_results['vol_impact']['scenarios'] <= volatility * 0.5)[0][-1]] if any(risk_results['vol_impact']['scenarios'] <= volatility * 0.5) else 0,
                                 '1 Week Passes': risk_results['time_decay']['one_week_effect'],
                                 'Market Crash': risk_results['extreme_scenarios']['pnl_change']['market_crash_2008'] if 'market_crash_2008' in risk_results['extreme_scenarios']['pnl_change'] else 0
                             }
