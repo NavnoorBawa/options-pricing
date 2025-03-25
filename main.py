@@ -3312,38 +3312,50 @@ def main():
                                 col1, col2 = st.columns([3, 1])
                                 
                                 with col1:
-                                    # Create time decay chart
-                                    time_fig = plt.figure(figsize=(12, 6))
                                     
+                                    # Create time decay chart with correct orientation and behavior
+                                    time_fig = plt.figure(figsize=(12, 6))
+
                                     # Determine which P&L values to show
                                     display_pnl = risk_results['time_decay']['absolute_pnl'] if show_absolute_pnl else risk_results['time_decay']['pnl_change']
-                                    
+
+                                    # Iron Condor typically benefits from time decay (theta positive)
+                                    # Reverse the x-axis to show time passing left to right (days decreasing)
+                                    days_to_expiry = risk_results['time_decay']['scenarios']  # These are in days
+                                        
+                                    # Sort x and y values by descending days (so days decrease from left to right)
+                                    sorted_indices = np.argsort(days_to_expiry)[::-1]
+                                    sorted_days = np.array(days_to_expiry)[sorted_indices]
+                                    sorted_pnl = np.array(display_pnl)[sorted_indices]
+
                                     # Use line chart for time decay visualization
-                                    plt.plot(risk_results['time_decay']['scenarios'], display_pnl, 'o-',
+                                    plt.plot(sorted_days, sorted_pnl, 'o-',
                                            color='#FF851B', linewidth=2, markersize=8)
-                                    
+
                                     plt.axhline(y=0, color='white', linestyle='-', alpha=0.3)
                                     plt.xlabel('Days to Expiration', fontsize=12)
                                     plt.ylabel('P&L ($)' if show_absolute_pnl else 'P&L Change ($)', fontsize=12)
                                     plt.title(f'Time Decay Effect on {selected_strategy} P&L', fontsize=14, fontweight='bold')
                                     plt.grid(True, alpha=0.3)
-                                    
-                                    # Add current time marker
+
+                                    # Add current time marker on the correct side of the graph
                                     current_time = time_to_maturity * 252  # Convert to days
                                     plt.axvline(x=current_time, color='yellow', linestyle='--', alpha=0.5)
                                     plt.text(current_time, plt.ylim()[0] * 0.9, 'Current',
                                            rotation=90, va='bottom', color='yellow', alpha=0.7)
-                                    
-                                    # Add value labels at key points
-                                    for i, (x, y) in enumerate(zip(risk_results['time_decay']['scenarios'], display_pnl)):
-                                        if i % 2 == 0 or i == len(display_pnl) - 1:  # Label every other point to avoid crowding
-                                            plt.text(x, y + (0.02 * max(display_pnl) if y > 0 else 0.02 * min(display_pnl)),
+
+                                    # Add value labels at key points - make sure we put them in readable positions
+                                    for i, (x, y) in enumerate(zip(sorted_days, sorted_pnl)):
+                                        if i % 2 == 0 or i == len(sorted_pnl) - 1:  # Label every other point to avoid crowding
+                                            y_offset = 0.02 * max(abs(max(sorted_pnl)), abs(min(sorted_pnl)))
+                                            plt.text(x, y + (y_offset if y > 0 else -y_offset),
                                                    f'${y:.2f}',
-                                                   ha='center', va='bottom',
+                                                   ha='center', va='bottom' if y > 0 else 'top',
                                                    color='white', fontweight='bold')
-                                    
+
+                                    # Ensure x-axis is properly formatted for days
+                                    plt.xlim(max(sorted_days) * 1.05, min(sorted_days) * 0.9)  # Give some extra space on both ends
                                     plt.tight_layout()
-                                    st.pyplot(time_fig)
                                 
                                 with col2:
                                     # Display time decay metrics
