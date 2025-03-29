@@ -2932,26 +2932,53 @@ def display_vol_surface_visualizations(display_mode, strikes, maturities, smooth
         st.pyplot(fig)
     
     if display_mode == "Skew Cross-Sections" or display_mode == "All Views":
-        # 3D Volatility Skew Cross-Sections with Plotly for interactivity
+        # 3D Volatility Skew Cross-Sections with enhanced Plotly visualization
         st.subheader("Interactive 3D Volatility Skew Cross-Sections")
         
         try:
             # Import plotly
             import plotly.graph_objects as go
             from plotly.subplots import make_subplots
+            import plotly.express as px
             
             # Create figure
             fig = make_subplots(specs=[[{"type": "surface"}]])
             
-            # Add the main volatility surface
+            # Create a better colorscale based on the selected scheme
+            if color_scheme == "viridis":
+                custom_colorscale = px.colors.sequential.Viridis
+            elif color_scheme == "plasma":
+                custom_colorscale = px.colors.sequential.Plasma
+            elif color_scheme == "inferno":
+                custom_colorscale = px.colors.sequential.Inferno
+            elif color_scheme == "magma":
+                custom_colorscale = px.colors.sequential.Magma
+            else:
+                custom_colorscale = px.colors.sequential.Viridis
+            
+            # Create better surface lighting
+            lighting_effects = dict(ambient=0.5, diffuse=0.8, roughness=0.5, specular=0.9, fresnel=0.2)
+            
+            # Set min/max values for consistent coloring
+            min_vol = np.min(smoothed_ivs)
+            max_vol = np.max(smoothed_ivs)
+            
+            # Add the main volatility surface with enhanced attributes
             fig.add_trace(
                 go.Surface(
                     x=K_grid,
                     y=T_grid,
                     z=smoothed_ivs,
-                    colorscale=color_scheme,
-                    opacity=0.7,
+                    colorscale=custom_colorscale,
+                    opacity=0.8,
+                    lighting=lighting_effects,
                     showscale=True,
+                    cmin=min_vol,
+                    cmax=max_vol,
+                    contours={
+                        "z": {"show": True, "start": min_vol, "end": max_vol, "size": (max_vol-min_vol)/6, "color":"white", "width": 1}
+                    },
+                    hovertemplate='<b>Moneyness</b>: %{x:.2f}<br><b>Maturity</b>: %{y:.2f} years<br><b>Volatility</b>: %{z:.2%}<extra></extra>',
                     name='Volatility Surface'
                 )
             )
@@ -2962,10 +2989,10 @@ def display_vol_surface_visualizations(display_mode, strikes, maturities, smooth
             else:
                 selected_indices = range(len(maturities))
             
-            # Define colors for the lines
-            line_colors = ['red', 'green', 'blue', 'cyan', 'magenta', 'yellow']
+            # Define better colors for the lines - more vibrant
+            line_colors = ['rgb(255,30,30)', 'rgb(30,200,30)', 'rgb(30,30,255)', 'rgb(0,200,200)', 'rgb(200,0,200)', 'rgb(200,200,0)']
             
-            # Add bold lines for each cross-section
+            # Add bold lines for each cross-section with markers and better hover info
             for i, idx in enumerate(selected_indices):
                 if idx < 0:  # Handle negative index
                     actual_idx = len(maturities) + idx
@@ -2975,65 +3002,270 @@ def display_vol_surface_visualizations(display_mode, strikes, maturities, smooth
                 maturity_value = maturities[actual_idx]
                 color = line_colors[i % len(line_colors)]
                 
-                # Add the highlighted cross-section line
+                # Add the highlighted cross-section line with markers for better visibility
                 fig.add_trace(
                     go.Scatter3d(
                         x=strikes/current_price,
                         y=[maturity_value] * len(strikes),
                         z=smoothed_ivs[actual_idx, :],
-                        mode='lines',
-                        line=dict(color=color, width=6),
-                        name=f'T = {maturity_value:.2f} years'
+                        mode='lines+markers',
+                        line=dict(color=color, width=8),
+                        marker=dict(size=4, color=color),
+                        name=f'T = {maturity_value:.2f} years',
+                        hovertemplate='<b>Moneyness</b>: %{x:.2f}<br><b>Maturity</b>: %{y:.2f} years<br><b>Volatility</b>: %{z:.2%}<extra></extra>'
+                    )
+                )
+                
+                # Add visible markers at ATM position
+                atm_idx = np.argmin(np.abs(strikes/current_price - 1.0))
+                fig.add_trace(
+                    go.Scatter3d(
+                        x=[strikes[atm_idx]/current_price],
+                        y=[maturity_value],
+                        z=[smoothed_ivs[actual_idx, atm_idx]],
+                        mode='markers',
+                        marker=dict(
+                            size=6,
+                            color=color,
+                            symbol='circle',
+                            line=dict(
+                                color='white',
+                                width=1
+                            )
+                        ),
+                        name=f'ATM T={maturity_value:.2f}',
+                        showlegend=False,
+                        hovertemplate='<b>ATM Volatility</b>: %{z:.2%}<br><b>Maturity</b>: {:.2f} years<extra></extra>'.format(maturity_value)
                     )
                 )
             
-            # Add a vertical plane at ATM
+            # Add a better vertical plane at ATM with grid lines
             atm_idx = np.argmin(np.abs(strikes/current_price - 1.0))
             if atm_idx >= 0 and atm_idx < len(strikes):
                 x_atm = strikes[atm_idx]/current_price
                 
-                # Create a semi-transparent vertical plane
+                # Create a semi-transparent vertical plane with grid lines
                 y_plane = np.linspace(min(maturities), max(maturities), 10)
-                z_plane = np.linspace(0, np.max(smoothed_ivs), 10)
+                z_plane = np.linspace(0, np.max(smoothed_ivs)*1.1, 10)
                 Y_plane, Z_plane = np.meshgrid(y_plane, z_plane)
                 X_plane = np.ones_like(Y_plane) * x_atm
                 
+                # Add the plane with grid lines
                 fig.add_trace(
                     go.Surface(
                         x=X_plane, y=Y_plane, z=Z_plane,
-                        colorscale=[[0, 'rgba(200,200,200,0.3)'], [1, 'rgba(200,200,200,0.3)']],
+                        colorscale=[[0, 'rgba(200,200,200,0.2)'], [1, 'rgba(220,220,220,0.2)']],
                         showscale=False,
-                        name='ATM Plane'
+                        hoverinfo='skip',
+                        name='ATM Plane',
+                        contours={
+                            "y": {"show": True, "start": min(maturities), "end": max(maturities), "size": (max(maturities)-min(maturities))/4, "color":"white", "width": 1},
+                            "z": {"show": True, "start": 0, "end": np.max(smoothed_ivs)*1.1, "size": np.max(smoothed_ivs)/5, "color":"white", "width": 1}
+                        }
                     )
                 )
+                
+                # Add ATM label
+                fig.add_trace(
+                    go.Scatter3d(
+                        x=[x_atm],
+                        y=[max(maturities)],
+                        z=[np.max(smoothed_ivs)*1.05],
+                        mode='text',
+                        text=['ATM'],
+                        textposition='top center',
+                        textfont=dict(
+                            size=14,
+                            color='white'
+                        ),
+                        showlegend=False,
+                        hoverinfo='skip'
+                    )
+                )
+            
+            # Add buttons for preset views
+            fig.update_layout(
+                updatemenus=[
+                    dict(
+                        type="buttons",
+                        direction="down",
+                        buttons=[
+                            dict(
+                                args=[{"scene.camera.eye": {"x": 1.5, "y": -1.5, "z": 1}}],
+                                label="Default View",
+                                method="relayout"
+                            ),
+                            dict(
+                                args=[{"scene.camera.eye": {"x": 0, "y": -2.5, "z": 0.1}}],
+                                label="Side View",
+                                method="relayout"
+                            ),
+                            dict(
+                                args=[{"scene.camera.eye": {"x": 0, "y": 0, "z": 2.5}}],
+                                label="Top View",
+                                method="relayout"
+                            ),
+                            dict(
+                                args=[{"scene.camera.eye": {"x": 2.5, "y": 0, "z": 0.1}}],
+                                label="Front View",
+                                method="relayout"
+                            )
+                        ],
+                        pad={"r": 10, "t": 10},
+                        showactive=True,
+                        x=0.05,
+                        xanchor="left",
+                        y=1.1,
+                        yanchor="top"
+                    )
+                ]
+            )
             
             # Update the layout for better visualization
             fig.update_layout(
                 scene=dict(
-                    xaxis_title='Moneyness (K/S)',
-                    yaxis_title='Maturity (Years)',
-                    zaxis_title='Implied Volatility',
+                    xaxis=dict(
+                        title='Moneyness (K/S)',
+                        nticks=10,
+                        tickformat='.2f',
+                        gridcolor='rgba(255, 255, 255, 0.2)',
+                        showbackground=True,
+                        backgroundcolor='rgba(50, 50, 50, 0.8)'
+                    ),
+                    yaxis=dict(
+                        title='Maturity (Years)',
+                        nticks=10,
+                        tickformat='.2f',
+                        gridcolor='rgba(255, 255, 255, 0.2)',
+                        showbackground=True,
+                        backgroundcolor='rgba(50, 50, 50, 0.8)'
+                    ),
+                    zaxis=dict(
+                        title='Implied Volatility',
+                        nticks=10,
+                        tickformat='.1%',
+                        gridcolor='rgba(255, 255, 255, 0.2)',
+                        showbackground=True,
+                        backgroundcolor='rgba(50, 50, 50, 0.8)'
+                    ),
                     aspectratio=dict(x=1.5, y=1.5, z=0.8),
                     camera=dict(
                         eye=dict(x=1.5, y=-1.5, z=1)  # Initial camera position
                     )
                 ),
-                title='3D Volatility Skew Cross-Sections',
-                height=700,
-                margin=dict(l=0, r=0, b=0, t=40),
+                title=dict(
+                    text='3D Volatility Skew Cross-Sections',
+                    font=dict(
+                        size=20,
+                        color='white'
+                    ),
+                    y=0.95
+                ),
+                height=800,  # Taller visualization
+                margin=dict(l=0, r=0, b=0, t=60),
                 legend=dict(
                     yanchor="top",
-                    y=0.99,
-                    xanchor="left",
-                    x=0.01
+                    y=0.98,
+                    xanchor="right",
+                    x=0.99,
+                    bgcolor="rgba(50, 50, 50, 0.6)",
+                    bordercolor="rgba(255, 255, 255, 0.2)",
+                    borderwidth=1
+                ),
+                plot_bgcolor='rgba(25, 25, 25, 1)',
+                paper_bgcolor='rgba(25, 25, 25, 1)',
+                font=dict(
+                    color='white'
+                ),
+                coloraxis_colorbar=dict(
+                    title="Volatility",
+                    tickformat='.1%'
                 )
+            )
+            
+            # Add annotations explaining the visualization
+            fig.add_annotation(
+                text="Colored lines show volatility skew at different maturities",
+                x=0.5,
+                y=0,
+                xref="paper",
+                yref="paper",
+                showarrow=False,
+                font=dict(
+                    size=12,
+                    color="white"
+                ),
+                bgcolor="rgba(50, 50, 50, 0.6)",
+                bordercolor="rgba(255, 255, 255, 0.2)",
+                borderwidth=1,
+                borderpad=4
             )
             
             # Display the interactive plot
             st.plotly_chart(fig, use_container_width=True)
             
-            # Add usage instructions
-            st.info("👆 You can rotate, zoom, and pan this 3D visualization. Use the menu in the top-right corner for more options.")
+            # Add usage instructions with better formatting
+            st.markdown("""
+            <div style="background-color: rgba(50, 50, 50, 0.6); padding: 15px; border-radius: 5px; border: 1px solid rgba(255, 255, 255, 0.2);">
+                <h4 style="color: white; margin-top: 0;">Interactive Controls:</h4>
+                <ul style="color: white;">
+                    <li><strong>Rotate:</strong> Click and drag to rotate the visualization</li>
+                    <li><strong>Zoom:</strong> Scroll to zoom in/out</li>
+                    <li><strong>Pan:</strong> Right-click and drag to pan</li>
+                    <li><strong>Reset View:</strong> Double-click to reset the view</li>
+                    <li><strong>Hover Information:</strong> Hover over points to see exact volatility values</li>
+                    <li><strong>Preset Views:</strong> Use the buttons at the top-left to switch between preset views</li>
+                </ul>
+            </div>
+            """, unsafe_allow_html=True)
+                    
+            # Add analysis of the surface
+            with st.expander("Volatility Skew Analysis", expanded=False):
+                col1, col2 = st.columns(2)
+                
+                # ATM Volatility Term Structure
+                with col1:
+                    atm_idx = np.argmin(np.abs(strikes/current_price - 1.0))
+                    atm_vols = smoothed_ivs[:, atm_idx]
+                    
+                    atm_term_fig = px.line(
+                        x=maturities,
+                        y=atm_vols,
+                        labels={"x": "Maturity (Years)", "y": "ATM Volatility"},
+                        title="ATM Volatility Term Structure",
+                        template="plotly_dark"
+                    )
+                    
+                    # Add markers
+                    atm_term_fig.update_traces(mode='lines+markers', marker=dict(size=8))
+                    
+                    # Display the figure
+                    st.plotly_chart(atm_term_fig, use_container_width=True)
+                    
+                # Volatility Skew Analysis
+                with col2:
+                    # Calculate skew at each maturity
+                    skews = []
+                    for i in range(len(maturities)):
+                        # Simple skew measure: difference between 90% and 110% moneyness
+                        otm_put_idx = max(0, np.argmin(np.abs(strikes/current_price - 0.9)))
+                        otm_call_idx = min(len(strikes)-1, np.argmin(np.abs(strikes/current_price - 1.1)))
+                        skew_value = smoothed_ivs[i, otm_put_idx] - smoothed_ivs[i, otm_call_idx]
+                        skews.append(skew_value)
+                    
+                    skew_fig = px.line(
+                        x=maturities,
+                        y=skews,
+                        labels={"x": "Maturity (Years)", "y": "Volatility Skew (90% - 110%)"},
+                        title="Volatility Skew by Maturity",
+                        template="plotly_dark"
+                    )
+                    
+                    # Add markers
+                    skew_fig.update_traces(mode='lines+markers', marker=dict(size=8))
+                    
+                    # Display the figure
+                    st.plotly_chart(skew_fig, use_container_width=True)
             
         except Exception as e:
             st.warning(f"Interactive 3D visualization failed: {str(e)}. Falling back to static visualization.")
@@ -3047,8 +3279,8 @@ def display_vol_surface_visualizations(display_mode, strikes, maturities, smooth
                 
                 # Draw a simpler semi-transparent surface
                 surf = ax.plot_surface(K_grid, T_grid, smoothed_ivs,
-                                      cmap=color_scheme, alpha=0.3,
-                                      rstride=1, cstride=1)
+                                     cmap=color_scheme, alpha=0.3,
+                                     rstride=1, cstride=1)
                 
                 # Select specific maturities to highlight as cross-sections
                 if len(maturities) >= 5:
