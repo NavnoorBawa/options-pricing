@@ -3060,7 +3060,7 @@ def display_vol_surface_visualizations(display_mode, strikes, maturities, smooth
                             ),
                             name=f'ATM T={maturity_value:.2f}',
                             showlegend=False,
-                            hovertemplate='<b>ATM Volatility</b>: %{z:.2%}<br><b>Maturity</b>: {:.2f} years<extra></extra>'.format(maturity_value)
+                            hovertemplate=f'<b>ATM Volatility</b>: %{{z:.2%}}<br><b>Maturity</b>: {maturity_value:.2f} years<extra></extra>'
                         )
                     )
             
