@@ -2575,12 +2575,12 @@ def handle_local_volatility_tool(current_price, risk_free_rate, volatility):
         
         # Visualization options
         st.subheader("Visualization Options")
-        
+
         display_mode = st.radio(
             "Display Mode",
-            ["3D Surface", "Contour Plot", "Term Structure", "Skew Analysis", "All Views"]
+            ["3D Surface", "Contour Plot", "Term Structure", "Skew Analysis", "Skew Cross-Sections", "All Views"]
         )
-        
+
         color_scheme = st.selectbox(
             "Color Scheme",
             ["viridis", "plasma", "inferno", "magma", "cividis"]
@@ -2928,6 +2928,109 @@ def display_vol_surface_visualizations(display_mode, strikes, maturities, smooth
         ax.set_title('Volatility Skew Across Maturities')
         ax.grid(True, alpha=0.3)
         ax.legend()
+        
+        st.pyplot(fig)
+    
+    if display_mode == "Skew Cross-Sections" or display_mode == "All Views":
+        # 3D Volatility Skew Cross-Sections
+        st.subheader("Volatility Skew Cross-Sections")
+        
+        fig = plt.figure(figsize=(12, 8))
+        ax = fig.add_subplot(111, projection='3d')
+        
+        # Add the main volatility surface as a semi-transparent reference
+        surf = ax.plot_surface(K_grid, T_grid, smoothed_ivs,
+                             cmap=color_scheme, alpha=0.4,
+                             linewidth=0, antialiased=True)
+        
+        # Select specific maturities to highlight as cross-sections
+        if len(maturities) >= 5:
+            selected_indices = [0, len(maturities)//4, len(maturities)//2, 3*len(maturities)//4, -1]
+        else:
+            selected_indices = range(len(maturities))
+        
+        # Generate a colormap for the lines
+        cmap = plt.cm.get_cmap('rainbow', len(selected_indices))
+        
+        # Add bold lines for each cross-section with vertical projection lines
+        for i, idx in enumerate(selected_indices):
+            if idx < 0:  # Handle negative index
+                actual_idx = len(maturities) + idx
+            else:
+                actual_idx = idx
+            
+            maturity_value = maturities[actual_idx]
+            color = cmap(i)
+            
+            # Add the highlighted cross-section
+            ax.plot(strikes/current_price,
+                    [maturity_value] * len(strikes),
+                    smoothed_ivs[actual_idx, :],
+                    color=color,
+                    linewidth=4,
+                    label=f'T = {maturity_value:.2f} years')
+            
+            # Add vertical projection lines for selected points
+            for j in range(0, len(strikes), max(1, len(strikes)//5)):
+                ax.plot([strikes[j]/current_price, strikes[j]/current_price],
+                       [maturity_value, maturity_value],
+                       [0, smoothed_ivs[actual_idx, j]],
+                       color=color, linestyle='--', alpha=0.5, linewidth=1)
+        
+        # Add a vertical plane at ATM (K/S = 1)
+        atm_idx = np.argmin(np.abs(strikes/current_price - 1.0))
+        x_atm = strikes[atm_idx]/current_price
+        
+        # Create points for the ATM plane
+        xx, yy = np.meshgrid([x_atm, x_atm], [maturities.min(), maturities.max()])
+        zz = np.zeros_like(xx)
+        zz[:] = [[0, 0], [np.max(smoothed_ivs), np.max(smoothed_ivs)]]
+        
+        # Plot the ATM reference plane
+        ax.plot_surface(xx, yy, zz, color='gray', alpha=0.2)
+        
+        # Set labels and title
+        ax.set_xlabel('Moneyness (K/S)')
+        ax.set_ylabel('Maturity (Years)')
+        ax.set_zlabel('Implied Volatility')
+        ax.set_title('3D Volatility Skew Cross-Sections Analysis')
+        
+        # Add legend
+        ax.legend(loc='upper left', bbox_to_anchor=(0, 1), fontsize='small')
+        
+        # Set the camera position for better visualization
+        ax.view_init(elev=30, azim=-45)
+        
+        # Calculate and annotate skew values
+        if len(selected_indices) > 0:
+            skew_values = []
+            for idx in selected_indices:
+                if idx < 0:
+                    actual_idx = len(maturities) + idx
+                else:
+                    actual_idx = idx
+                    
+                # Calculate skew as slope of volatility curve near ATM
+                if atm_idx > 0 and atm_idx < len(strikes) - 1:
+                    skew = (smoothed_ivs[actual_idx, atm_idx+1] - smoothed_ivs[actual_idx, atm_idx-1]) / \
+                           ((strikes[atm_idx+1] - strikes[atm_idx-1])/current_price)
+                else:
+                    # Handle boundary case
+                    if atm_idx == 0:
+                        skew = (smoothed_ivs[actual_idx, 1] - smoothed_ivs[actual_idx, 0]) / \
+                               ((strikes[1] - strikes[0])/current_price)
+                    else:
+                        skew = (smoothed_ivs[actual_idx, -1] - smoothed_ivs[actual_idx, -2]) / \
+                               ((strikes[-1] - strikes[-2])/current_price)
+                        
+                skew_values.append((maturities[actual_idx], skew))
+            
+            # Add text box with skew values
+            skew_text = "ATM Volatility Skew:\n" + \
+                        "\n".join([f"T = {t:.2f}: {s:.4f}" for t, s in skew_values])
+            
+            plt.figtext(0.02, 0.02, skew_text, fontsize=9,
+                       bbox=dict(facecolor='white', alpha=0.8, boxstyle='round,pad=0.5'))
         
         st.pyplot(fig)
     
